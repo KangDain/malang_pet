@@ -470,7 +470,7 @@ function wrapText(c, text, maxW) {
   return lines.length ? lines : [''];
 }
 
-function drawSpeech(c, text, cx, top, icon = null) {
+function drawSpeech(c, text, cx, top, icon = null, tail = true) {
   const px = 2, lineH = 14;
   c.font = '12px Galmuri11, "Malgun Gothic", sans-serif';
   const iw = icon ? (SPR[icon][0].length + 3) * px : 0;   // 글자 앞 아이콘 자리
@@ -478,7 +478,7 @@ function drawSpeech(c, text, cx, top, icon = null) {
   const textW = Math.max(...lines.map((l) => Math.ceil(c.measureText(l).width)));
   const wc = Math.ceil((textW + 12 + iw) / px), hc = 2 + Math.round((lines.length * lineH) / px);
   const ox = snap(clamp(cx - 12, 8, W - wc * px - 8), px), oy = snap(top - (hc + 4) * px, px);
-  const tail = clamp(Math.round((cx - ox) / px), 2, wc - 3);
+  const tx = clamp(Math.round((cx - ox) / px), 2, wc - 3);
   const cells = new Cells();
   for (let y = 0; y < hc; y++) {
     for (let x = 0; x < wc; x++) {
@@ -486,12 +486,34 @@ function drawSpeech(c, text, cx, top, icon = null) {
       if (!corner) cells.set(x, y, T.bg);
     }
   }
-  cells.set(tail, hc, T.bg); cells.set(tail + 1, hc, T.bg); cells.set(tail, hc + 1, T.bg);
+  if (tail) { cells.set(tx, hc, T.bg); cells.set(tx + 1, hc, T.bg); cells.set(tx, hc + 1, T.bg); }
   cells.outline(T.outline).draw(c, ox, oy, px);
   if (icon) drawSprite(c, icon, ox + 6 + Math.floor(SPR[icon][0].length / 2) * px + px, oy + (hc - 2) * px, px);
   c.fillStyle = T.text;
   c.textAlign = 'left'; c.textBaseline = 'middle';
   lines.forEach((l, i) => c.fillText(l, ox + 6 + iw, oy + px + lineH * i + lineH / 2 + 1));
+  return oy;
+}
+
+// 대화 말풍선 쌓기: 새 말이 머리 바로 위, 예전 말은 위로 밀려 올라가며 흐려진다
+const CHAT_LIFE = 20, CHAT_MAX = 3;
+const CHAT_ALPHA = [1, 0.5, 0.28];
+function pushChat(list, text, thumb = null) {
+  list.push({ text, thumb, t: CHAT_LIFE });
+  while (list.length > CHAT_MAX) list.shift();
+}
+function ageChat(list, dt) {
+  for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
+}
+function drawChat(c, list, cx, top) {
+  let y = top;
+  for (let i = list.length - 1, k = 0; i >= 0; i--, k++) {
+    const m = list[i];
+    c.globalAlpha = CHAT_ALPHA[k] * Math.min(1, m.t);   // 마지막 1초 동안 스르르
+    if (m.thumb) y = drawPhotoCard(c, m.thumb, cx, y);
+    if (m.text) y = drawSpeech(c, m.text, cx, y, null, k === 0 && !m.thumb);
+  }
+  c.globalAlpha = 1;
 }
 
 // 사진은 머리 위에 폴라로이드처럼. 카드 윗변 y를 돌려준다 (말풍선은 그 위에)
@@ -722,7 +744,7 @@ function viewOf(p) {
       geo: null,
       // 자는 말랑이는 집 안 침대에 있다 (켤 때 이미 자고 있었으면 바로 집 안)
       inside: !!p.sleeping && !p.visitor, goHome: false, enterT: 0,
-      shakeT: 0, photo: null,
+      shakeT: 0,
     };
     views.set(p.id, v);
   }
@@ -943,7 +965,6 @@ function updateView(p, v, dt) {
   }
   if (v.enterT > 0) v.enterT = Math.max(0, v.enterT - dt);
   if (v.shakeT > 0) v.shakeT = Math.max(0, v.shakeT - dt);
-  if (v.photo && (v.photo.t -= dt) <= 0) v.photo = null;
   if (v.inside) { v.geo = null; return; }
 
   if (st === 'adult' && !p.form && !p.visitor) {
@@ -1357,25 +1378,31 @@ function frame(now) {
       drawLabel(ctx, p.name, v.geo.cx, v.geo.top - 14);
       continue;
     }
-    // 방금 보낸 사진은 머리 위에 폴라로이드로
-    const top = v.photo ? drawPhotoCard(ctx, v.photo.thumb, v.geo.cx, v.geo.top) : v.geo.top;
+    if (myChat.length && p === focusPet()) continue;   // 대화 중인 말랑이는 대화 말풍선만
+    const top = v.geo.top;
     const icon = v.emote ? v.emote.icon : p.sleeping ? 'zee' : null;
     if (icon) drawCloud(ctx, v.geo.cx, top, icon, t);
     else if (v.speech) drawSpeech(ctx, v.speech.text, v.geo.cx, top);
     else if (p === focusP) drawSpeech(ctx, '집중 중', v.geo.cx, top, 'focus');
   }
+  // 내가 보낸 쪽지는 내 말랑이가 말풍선으로 (다들 자고 있으면 집 표지 위에서)
+  ageChat(myChat, dt);
+  const talker = focusPet();
+  if (myChat.length) {
+    const tv = talker && viewOf(talker);
+    if (tv && tv.geo && !tv.held) drawChat(ctx, myChat, tv.geo.cx, tv.geo.top);
+    else if (!talker && homeMark.geo) drawChat(ctx, myChat, homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y);
+  }
   // 다들 자고 있으면 집중 구름은 집 표지 위에
-  if (state.focus && !focusP && homeMark.geo) drawSpeech(ctx, '집중 중', homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y, 'focus');
+  if (state.focus && !focusP && homeMark.geo && !myChat.length) drawSpeech(ctx, '집중 중', homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y, 'focus');
   // 놀러 온 친구네 말랑이는 쪽지(와 사진)를 말풍선으로 보여 준다
   for (const vis of visitors) {
     const v = vis.v;
     if (!v.geo) continue;
     if (vis.pet.id === hoverVisitor) { drawLabel(ctx, `${vis.nick}의 ${vis.pet.name}`, v.geo.cx, v.geo.top - 14); continue; }
-    // 쪽지가 오면 잠깐 말풍선으로 말하고, 평소엔 그냥 같이 논다
-    const talking = vis.msgT > 0;
-    const top = talking && vis.thumb ? drawPhotoCard(ctx, vis.thumb, v.geo.cx, v.geo.top) : v.geo.top;
-    if (v.emote) drawCloud(ctx, v.geo.cx, top, v.emote.icon, t);
-    else if (talking && vis.text) drawSpeech(ctx, vis.text, v.geo.cx, top);
+    // 쪽지가 오면 말풍선으로 말하고, 평소엔 그냥 같이 논다
+    if (vis.chat.length) drawChat(ctx, vis.chat, v.geo.cx, v.geo.top);
+    else if (v.emote) drawCloud(ctx, v.geo.cx, v.geo.top, v.emote.icon, t);
   }
 
   if (home.hidden && overHomeMark(mouse) && !hoverId && !(mouse.down && mouse.down.dragging)) {
@@ -2550,8 +2577,15 @@ function connectFriends() {
   }
 }
 
+// 인사할 때 내 대표 말랑이 모습도 같이 보내서, 친구 화면에 바로 놀러 간다
+function myPetInfo() {
+  const p = focusPet() || state.pets.find((x) => stageOf(x) !== 'egg');
+  return p ? { name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p) } : null;
+}
+const hello = () => ({ t: 'hi', code: state.myCode, nick: myNick(), focus: state.focus, pet: myPetInfo() });
+
 function setupConn(conn) {
-  conn.on('open', () => conn.send({ t: 'hi', code: state.myCode, nick: myNick(), focus: state.focus }));
+  conn.on('open', () => conn.send(hello()));
   conn.on('data', (d) => onData(conn, d));
   conn.on('close', () => dropConn(conn));
   conn.on('error', () => dropConn(conn));
@@ -2581,6 +2615,7 @@ function onData(conn, d) {
     friendStatus.set(code, { focus: !!d.focus });
     pending.delete(code);
     conns.set(code, conn);
+    if (d.pet && typeof d.pet === 'object') visitorFor(f, d.pet);
     persist();
     refreshFriends();
     return;
@@ -2633,8 +2668,9 @@ function receiveNote(f, d, img) {
   if (!text && !img) return;
   const nick = friendName(f);
   logNote({ code: f.code, dir: 'in', text, img });
-  spawnVisitor(f, nick, text, d.pet && typeof d.pet === 'object' ? d.pet : {}, img);
-  toast(`${nick}의 말랑이가 ${img ? '사진' : '쪽지'}을 가져왔어요!`);
+  const vis = visitorFor(f, d.pet && typeof d.pet === 'object' ? d.pet : {});
+  vis.v.vy = -380; vis.v.sv -= 2;
+  pushChat(vis.chat, text, img ? makeThumb(img) : null);
   if (!state.focus) notify(`${nick}: ${text || '사진을 보냈어요'}`);
   refreshFriends();
 }
@@ -2747,8 +2783,7 @@ function sendNote() {
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요. 둘 다 켜져 있어야 전해져요');
   // 깨어 있는 말랑이가 쪽지를 들고 간다
-  const p = [selected(), ...state.pets].find((x) => x && stageOf(x) !== 'egg' && !x.sleeping)
-    || state.pets.find((x) => stageOf(x) !== 'egg');
+  const p = focusPet();
   // 사진은 조각내서 먼저 보내고, 쪽지에 사진 번호를 붙인다
   let photoId = null;
   if (photo) {
@@ -2758,30 +2793,23 @@ function sendNote() {
   }
   conn.send({
     t: 'msg', text, photo: photoId,
-    pet: p ? { name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p) } : null,
+    pet: myPetInfo(),
   });
   logNote({ code: fTarget, dir: 'out', text, img: photo ? photo.data : null });
   input.value = '';
   clearAttach();
-  // 내 말랑이도 보낸 말을 말풍선으로 한 번 읽어 주고 출발한다
+  // 내 화면에서도 내 말랑이가 보낸 말을 말풍선으로 말한다
+  pushChat(myChat, text, photo ? photo.thumb : null);
   if (p) {
     const v = viewOf(p);
-    if (!v.inside) {
-      if (!p.sleeping) { v.vy = -520; v.sv -= 3; }
-      if (text) say(v, text, 5);
-      else setEmote(v, 'letter', 3);
-      if (photo) v.photo = { thumb: photo.thumb, t: 4 };
-    }
-    toast(`${friendName(findFriend(fTarget))}에게 ${photo ? '사진' : '쪽지'}을 보냈어요`);
-  } else {
-    toast('쪽지를 보냈어요');
+    v.vy = -380; v.sv -= 2; v.emote = null; v.speech = null;
   }
   refreshFriends();
 }
 
-// 친구네 말랑이는 친구마다 한 마리만. 처음 쪽지가 올 때 놀러 와서,
-// 친구가 켜져 있는 동안 계속 머물며 새 쪽지를 말풍선으로 전한다.
-const VISITOR_TALK = 12;   // 말풍선이 떠 있는 시간(초)
+// 친구네 말랑이는 친구마다 한 마리만. 둘 다 켜져서 연결되면 한 번 톡 떨어져 놀러 오고,
+// 연결이 끊길 때까지 머물며 새 쪽지를 말풍선으로 전한다.
+const myChat = [];   // 내가 보낸 쪽지 → 내 말랑이 머리 위 말풍선
 function visitorLooks(info) {
   const stage = ['baby', 'child', 'adult'].includes(info.stage) ? info.stage : 'child';
   return {
@@ -2793,14 +2821,13 @@ function visitorLooks(info) {
   };
 }
 
-function spawnVisitor(f, nick, text, info, img = null) {
+function visitorFor(f, info) {
+  const nick = friendName(f);
   let vis = visitors.find((x) => x.code === f.code);
   if (vis) {
-    // 이미 와 있으면 그 자리에서 폴짝 뛰고 새 쪽지를 말한다
+    // 이미 와 있으면 모습만 맞춘다 (새로 만들지 않는다)
     Object.assign(vis.pet, visitorLooks(info));
     vis.nick = nick;
-    vis.v.vy = -380; vis.v.sv -= 2;
-    setEmote(vis.v, 'letter', 0.8);
   } else {
     const pet = {
       id: 'visitor-' + Math.random().toString(36).slice(2), visitor: true, ...visitorLooks(info),
@@ -2813,13 +2840,12 @@ function spawnVisitor(f, nick, text, info, img = null) {
     v.bubbleT = Infinity;
     setEmote(v, 'letter', 1.5);
     emit(v.x, v.y, 'sparkle', { n: 5, spread: 100, up: 160 });
-    vis = { pet, v, code: f.code, nick };
+    vis = { pet, v, code: f.code, nick, chat: [] };
     visitors.push(vis);
     while (visitors.length > 3) removeVisitor(visitors[0]);
+    toast(`${nick}님의 ${josa(pet.name, '이', '가')} 놀러 왔어요`);
   }
-  vis.text = text;
-  vis.thumb = img ? makeThumb(img) : null;
-  vis.msgT = VISITOR_TALK;
+  return vis;
 }
 
 function removeVisitor(vis) {
@@ -2832,7 +2858,7 @@ function removeVisitor(vis) {
 function updateVisitors(dt) {
   for (const vis of [...visitors]) {
     updateView(vis.pet, vis.v, dt);
-    vis.msgT = Math.max(0, (vis.msgT || 0) - dt);
+    ageChat(vis.chat, dt);
     // 친구가 앱을 끄면 집으로 돌아간다
     if (!conns.has(vis.code)) removeVisitor(vis);
   }
@@ -2848,12 +2874,11 @@ function visitorAt(pt) {
   return null;
 }
 
-// 놀러 온 말랑이를 누르면 인사하고, 마지막 쪽지를 다시 보여 주고, 답장 창이 열린다
+// 놀러 온 말랑이를 누르면 인사하고 답장 창이 열린다
 function visitorClicked(vis) {
   vis.v.sv += 3.5;
   vis.v.squint = 0.5;
   setEmote(vis.v, 'heart', 0.8);
-  if (vis.text || vis.thumb) vis.msgT = VISITOR_TALK;
   fTarget = vis.code;
   openFriends();
   $('fMsg').focus();
@@ -3007,7 +3032,7 @@ $('fNick').addEventListener('change', (e) => {
   state.nick = cleanText(e.target.value, 10);
   e.target.value = state.nick;
   persist();
-  for (const c of conns.values()) if (c.open) c.send({ t: 'hi', code: state.myCode, nick: myNick(), focus: state.focus });
+  for (const c of conns.values()) if (c.open) c.send(hello());
 });
 $('copyCode').addEventListener('click', () => {
   navigator.clipboard.writeText(fmtCode(state.myCode))
