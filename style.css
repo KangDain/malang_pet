@@ -79,7 +79,7 @@ canvas { image-rendering: pixelated; }
 @keyframes pop { from { transform: translateY(6px); } to { transform: none; } }
 
 /* 돌봄 카드 */
-#card { position: fixed; width: 248px; padding: 9px 11px 11px; animation: pop .12s steps(2); }
+#card { position: fixed; z-index: 10; width: 248px; padding: 9px 11px 11px; animation: pop .12s steps(2); }
 .head { display: flex; align-items: center; gap: 6px; }
 #pName { font-weight: bold; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0 8px; color: var(--text_sub); }
@@ -110,7 +110,7 @@ canvas { image-rendering: pixelated; }
 .titlebar .sub { color: var(--text_sub); }
 .titlebar .link { cursor: pointer; }
 #room {
-  display: block; width: 276px; height: 150px;
+  display: block; width: 276px; height: 150px; cursor: pointer;
   box-shadow: 0 -2px 0 0 var(--border), 0 2px 0 0 var(--border), -2px 0 0 0 var(--border), 2px 0 0 0 var(--border);
 }
 .home-actions { display: flex; gap: 8px; margin-top: 12px; }

@@ -769,6 +769,7 @@ function goHome(p, v) {
   v.emote = null; v.speech = null;
 }
 
+let wakeTipShown = false;
 function enterHouse(p, v) {
   v.goHome = false;
   v.goalT = 0;
@@ -776,6 +777,10 @@ function enterHouse(p, v) {
   v.enterT = 0.5;   // 스르르 사라지는 시간
   emit(v.x, v.y - 30, 'zee', { n: 2, spread: 30, up: 60, life: 1.2 });
   if (state.selectedId === p.id && !card.hidden && home.hidden) closeCard();
+  if (!wakeTipShown) {
+    wakeTipShown = true;
+    toast('깨우려면 말랑이네를 열고 침대의 말랑이를 눌러 주세요');
+  }
 }
 
 function leaveHouse(p, v) {
@@ -1570,9 +1575,18 @@ function placeCard() {
   if (card.hidden) return;
   const p = selected();
   const v = p && viewOf(p);
-  const g = v && (v.inside ? roomGeo(p) : v.geo);
-  if (!g) return closeCard();
   const w = card.offsetWidth, h = card.offsetHeight;
+  if (v && v.inside) {
+    // 집 안에서 자는 말랑이: 집 창 옆에 붙여서 연다 (집 창을 가리지 않게)
+    if (home.hidden) return closeCard();
+    const r = home.getBoundingClientRect();
+    const left = r.left - w - 14 >= 10 ? r.left - w - 14 : r.right + 14;
+    card.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
+    card.style.top = Math.round(clamp(r.bottom - h, 10, H - h - 10)) + 'px';
+    return;
+  }
+  const g = v && v.geo;
+  if (!g) return closeCard();
   card.style.left = Math.round(clamp(g.cx - w / 2, 10, W - w - 10)) + 'px';
   card.style.top = Math.round(clamp(g.top - h - 34, 10, H - h - 10)) + 'px';
 }
