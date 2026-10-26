@@ -98,7 +98,7 @@ canvas { image-rendering: pixelated; }
 .ico { display: block; }
 
 /* 말랑이네 집 창 */
-#home { position: fixed; width: 296px; padding: 0 10px 10px; animation: pop .12s steps(2); }
+#home, #fHouse { position: fixed; width: 296px; padding: 0 10px 10px; animation: pop .12s steps(2); }
 .titlebar {
   display: flex; align-items: center; gap: 6px;
   margin: 0 -10px 10px; padding: 6px 10px;
@@ -109,7 +109,7 @@ canvas { image-rendering: pixelated; }
 .titlebar .name { font-weight: bold; }
 .titlebar .sub { color: var(--text_sub); }
 .titlebar .link { cursor: pointer; }
-#room {
+#room, #fhRoom {
   display: block; width: 276px; height: 150px; cursor: pointer;
   box-shadow: 0 -2px 0 0 var(--border), 0 2px 0 0 var(--border), -2px 0 0 0 var(--border), 2px 0 0 0 var(--border);
 }

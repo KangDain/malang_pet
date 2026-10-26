@@ -102,6 +102,7 @@
     <div class="field">
       <div class="row">
         <span id="fTo" class="spacer">대화할 친구를 골라 주세요</span>
+        <button id="fVisit" class="btn small" title="친구네 집에 놀러 가요">놀러 가기</button>
         <button id="fShake" class="btn small" title="친구 바탕화면의 말랑이를 흔들어요">흔들기</button>
       </div>
       <div id="fLog"></div>
@@ -117,6 +118,18 @@
         <button id="fSend" class="btn small primary">보내기</button>
       </div>
     </div>
+  </div>
+
+  <!-- 친구네 집에 놀러 갔을 때 -->
+  <div id="fHouse" class="ui box" hidden>
+    <div id="fhBar" class="titlebar">
+      <canvas class="ico" data-icon="twin"></canvas>
+      <span id="fhName" class="name">친구네 집</span>
+      <span class="spacer"></span>
+      <button id="fhClose" class="link">돌아오기</button>
+    </div>
+    <canvas id="fhRoom" width="276" height="150"></canvas>
+    <div class="weather"><span id="fhLine"></span></div>
   </div>
 
   <div id="modal" hidden>
