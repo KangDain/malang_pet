@@ -192,7 +192,8 @@ function buildMenu() {
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked, path: exePath() }),
     }] : []),
     { type: 'separator' },
-    { label: '종료', click: () => app.quit() },
+    // 렌더러가 친구들에게 작별 인사를 보내고 끈다 (응답이 없으면 1초 뒤 그냥 끈다)
+    { label: '종료', click: () => { if (win) { win.webContents.send('command', 'quit'); setTimeout(() => app.quit(), 1000); } else app.quit(); } },
   ]);
 }
 

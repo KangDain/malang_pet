@@ -105,6 +105,13 @@ const SPR = {
   broom:    ['      tt', '     tt ', '    tt  ', '   tt   ', '  BBB   ', ' hhhhh  ', ' hhhhh  ', 'hhhhhhh ', 'h h h h '],
   puff:     [' s ', 'sss', ' s '],
   fly:      ['b b', ' o '],
+  fish:     ['  ccc c', ' cbccc ', '  ccc c'],
+  fishBig:  ['  www   w', ' wwwwwwww', 'wbwwwwww ', ' wwwwwwww', '  www   w'],
+  boot:     ['  sss', '  sss', '  sss', 'sssss', 'sssss'],
+  can:      ['sss', 'hhh', 'sss', 'sss'],
+  lily:     ['l lll', 'lllll'],
+  reed:     ['t', 't', 'l', 'l', 'l'],
+  bobber:   ['w', 'w', 'b'],
   stink:    ['l ', ' l', 'l ', ' l'],
   focus:    ['    ww', '   hww', '  hhh ', ' hhh  ', 'Bhh   ', 'BB    '],
   photo:    ['  sss  ', 'sssssss', 'ssscsss', 'sscbcss', 'ssscsss', 'sssssss'],
@@ -607,7 +614,14 @@ function toggleMarkHidden() {
 // 집중 모드: 내 말랑이 머리 위에 연필 구름이 뜨고, 친구들에게도 '집중 중'으로 보인다
 function toggleFocus() {
   state.focus = !state.focus;
-  toast(state.focus ? '집중 모드 시작! 말랑이들도 조용히 응원할게요' : '집중 모드 끝! 수고했어요');
+  if (state.focus) {
+    fishing.fish = 0; fishing.trash = 0;
+    toast('집중 모드 시작! 말랑이는 연못에서 낚시하며 기다릴게요');
+  } else {
+    const got = [fishing.fish && `물고기 ${fishing.fish}마리`, fishing.trash && `쓰레기 ${fishing.trash}개`].filter(Boolean);
+    toast(got.length ? `집중 모드 끝! 그동안 ${got.join(', ')}를 낚았어요` : '집중 모드 끝! 수고했어요');
+    stopFishing();
+  }
   const p = focusPet();
   if (p) {
     const v = viewOf(p);
@@ -621,6 +635,7 @@ function toggleFocus() {
 // 집중 구름을 띄울 말랑이: 고른 말랑이가 깨어 있으면 그 아이, 아니면 깨어 있는 첫째
 function focusPet() {
   const awake = (p) => p && stageOf(p) !== 'egg' && !p.sleeping && !viewOf(p).inside;
+  if (state.focus && awake(fisher())) return fisher();   // 집중 중엔 낚시하는 아이
   return [selected(), ...state.pets].find(awake) || null;
 }
 
@@ -650,6 +665,7 @@ function simulate(p, dtH, now) {
     const morning = isMorning(now) && p.energy >= 70 && now - (p.sleptAt || 0) > HOUR;
     if (!night && (p.energy >= 100 || morning)) {
       p.sleeping = false;
+      p.wokeAt = now;
       pendingEvents.push({ type: isMorning(now) ? 'morning' : 'wake', pet: p });
     }
   } else {
@@ -661,6 +677,11 @@ function simulate(p, dtH, now) {
       p.sleeping = true;
       p.sleptAt = now;
       pendingEvents.push({ type: 'faint', pet: p });
+    } else if (badCondition(p) && now - (p.wokeAt || 0) > HOUR / 3) {
+      // 컨디션이 나쁘면 알아서 쉬러 간다 (깨워 주면 20분은 버틴다)
+      p.sleeping = true;
+      p.sleptAt = now;
+      pendingEvents.push({ type: 'rest', pet: p });
     } else if (night && p.energy < 50 && !p.sick && now - (p.wokeAt || 0) > HOUR / 2) {
       // 밤이 깊으면 스르르 잠든다 (방금 깨웠으면 30분은 봐준다)
       p.sleeping = true;
@@ -701,6 +722,11 @@ function simulate(p, dtH, now) {
 }
 
 // 다들 집 침대에서 자니까, 다른 말랑이도 자고 있으면 같이 자는 셈
+// 기운이 바닥이거나, 아프거나, 전체적으로 많이 지쳤을 때
+function badCondition(p) {
+  return p.energy < 20 || p.sick || (p.hunger + p.happy + p.clean + p.energy) / 4 < 25;
+}
+
 function sleepBuddy(p) {
   return state.pets.some((o) => o !== p && o.sleeping);
 }
@@ -817,6 +843,7 @@ function leaveHouse(p, v) {
 // ===================== 움직임 =====================
 function hop(p, v) {
   if (v.eatT > 0) { v.hopT = 0.5; return; }
+  if (v.fishing) { v.hopT = 1; v.face = 1; return; }   // 낚시 중엔 가만히
 
   // "집으로 부르기" 중이면 목표 지점으로 폴짝폴짝
   if (v.goalT > 0 && v.goal !== null) {
@@ -921,11 +948,11 @@ function callSleepBuddies(p) {
 function needSpeech(p) {
   if (p.sleeping) return null;
   if (p.sick) return '아파.. 약 줘';
-  if (p.hunger < 30) return '배고파..';
+  if (p.hunger < 30) return pick(['배고파.. 밥 줘!', '꼬르륵.. 밥!']);
   if (p.poops.length >= 2) return '응가 치워 줘!';
   if (p.clean < 30) return pick(['씻겨 줘!', '꼬질꼬질해..', '문질문질 해 줘']);
-  if (p.energy < 25) return '졸려..';
-  if (p.happy < 30) return '놀아 줘!';
+  if (p.energy < 25) return pick(['졸려.. 재워 줘', '눈이 감겨..']);
+  if (p.happy < 30) return pick(['심심해.. 놀아 줘!', '공놀이 하자!']);
   return null;
 }
 
@@ -1112,7 +1139,7 @@ let meetT = rand(20, 40);
 
 function socialize(dt, now) {
   const all = [...state.pets, ...visitors.map((x) => x.pet)]
-    .filter((p) => stageOf(p) !== 'egg' && !p.sleeping && !viewOf(p).held);
+    .filter((p) => stageOf(p) !== 'egg' && !p.sleeping && !viewOf(p).held && !viewOf(p).fishing);
   // 부딪히면 통 튕기고, 둘 다 기분이 좋으면 하트를 주고받는다
   for (let i = 0; i < all.length; i++) {
     for (let j = i + 1; j < all.length; j++) {
@@ -1136,7 +1163,7 @@ function socialize(dt, now) {
   // 가끔 한 마리가 다른 말랑이에게 놀러 간다
   if ((meetT -= dt) > 0) return;
   meetT = rand(20, 40);
-  const free = state.pets.filter((p) => stageOf(p) !== 'egg' && !p.sleeping && !p.sick && viewOf(p).goalT <= 0 && !viewOf(p).held);
+  const free = state.pets.filter((p) => stageOf(p) !== 'egg' && !p.sleeping && !p.sick && viewOf(p).goalT <= 0 && !viewOf(p).held && !viewOf(p).fishing);
   if (free.length < 2 || ball) return;
   const a = pick(free), b = pick(free.filter((x) => x !== a));
   const va = viewOf(a), vb = viewOf(b);
@@ -1328,6 +1355,179 @@ function updateScrub() {
   }
 }
 
+// ===================== 집중 모드 낚시 =====================
+// 집중 모드를 켜면 대표 말랑이가 오른쪽 구석 작은 연못으로 가서 낚시를 한다.
+// 가끔 찌가 쏙 들어가면 물고기나 쓰레기를 낚아 올린다.
+const POND_RX = 14, POND_RY = 3;   // 연못 크기 (칸, 1칸 = 3px)
+const CATCHES = [
+  { sprite: 'fish', fish: true, w: 6 },
+  { sprite: 'fishBig', fish: true, w: 2 },
+  { sprite: 'boot', fish: false, w: 1.5 },
+  { sprite: 'can', fish: false, w: 1.5 },
+];
+const fishing = { id: null, phase: 'off', t: 0, item: null, fish: 0, trash: 0 };
+const pondX = () => Math.max(160, W - 200);
+const fishSpot = () => pondX() - POND_RX * 3 - 26;
+const fisher = () => (fishing.id && state.pets.find((p) => p.id === fishing.id)) || null;
+
+function pickCatch() {
+  let r = Math.random() * CATCHES.reduce((s, c) => s + c.w, 0);
+  for (const c of CATCHES) if ((r -= c.w) <= 0) return c;
+  return CATCHES[0];
+}
+
+function stopFishing() {
+  const p = fisher();
+  if (p) { const v = viewOf(p); v.fishing = false; v.goal = null; v.goalT = 0; }
+  fishing.id = null;
+  fishing.phase = 'off';
+  fishing.item = null;
+}
+
+function updateFishing(dt) {
+  if (!state.focus) { if (fishing.id) stopFishing(); return; }
+  // 낚시꾼이 잠들면 다른 깨어 있는 말랑이가 이어서 한다
+  let p = fisher();
+  if (!p || p.sleeping || stageOf(p) === 'egg' || viewOf(p).inside) {
+    if (p) stopFishing();
+    const next = [selected(), ...state.pets].find((x) => x && stageOf(x) !== 'egg' && !x.sleeping && !viewOf(x).inside);
+    if (!next) return;
+    fishing.id = next.id;
+    fishing.phase = 'walk';
+    p = next;
+  }
+  const v = viewOf(p);
+  const spot = fishSpot();
+  if (v.held) { v.fishing = false; fishing.phase = 'walk'; return; }
+  if (fishing.phase === 'walk') {
+    v.fishing = false;
+    if (Math.abs(v.x - spot) < 24 && v.grounded) {
+      fishing.phase = 'cast';
+      fishing.t = 0.6;
+      v.fishing = true;
+      v.goalT = 0;
+    } else if (v.goalT <= 0) {
+      v.goal = spot; v.goalT = 30; v.hopT = Math.min(v.hopT, 0.3);
+    }
+    return;
+  }
+  // 낚시 중엔 제자리에서 연못 쪽을 본다 (부딪혀 밀려나면 다시 걸어간다)
+  v.fishing = true;
+  v.face = 1;
+  if (Math.abs(v.x - spot) > 40) { fishing.phase = 'walk'; return; }
+  fishing.t -= dt;
+  if (fishing.t > 0) return;
+  if (fishing.phase === 'cast') {
+    fishing.phase = 'wait';
+    fishing.t = rand(12, 25);
+  } else if (fishing.phase === 'wait') {
+    fishing.phase = 'bite';
+    fishing.t = 1.2;
+    setEmote(v, 'exclaim', 1.2);
+  } else if (fishing.phase === 'bite') {
+    // 휙! 낚아 올린다
+    fishing.phase = 'reel';
+    fishing.t = 0.9;
+    fishing.item = pickCatch();
+    v.vy = -280; v.sv -= 2;
+    emit(pondX() - 10, floorY() - 8, 'drop', { n: 3, spread: 50, up: 120, gravity: 600 });
+  } else if (fishing.phase === 'reel') {
+    // 낚싯줄 끝에 매달고 잠깐 자랑
+    fishing.phase = 'show';
+    fishing.t = 1.6;
+    const c = fishing.item;
+    if (c.fish) {
+      fishing.fish++;
+      p.happy = clamp(p.happy + 3, 0, 100);
+      emit(v.x, v.y - 40, 'heart', { n: 2, spread: 40, up: 100 });
+    } else {
+      fishing.trash++;
+      p.happy = clamp(p.happy - 1, 0, 100);
+      emit(v.x, v.y - 40, 'sadDrop', { n: 1, spread: 20, up: 80 });
+    }
+  } else if (fishing.phase === 'show') {
+    if (fishing.item) emit(...rodTip(v), fishing.item.fish ? 'sparkle' : 'puff', { n: 3, spread: 40, up: 80 });
+    fishing.item = null;
+    fishing.phase = 'cast';
+    fishing.t = 0.6;
+  }
+}
+
+// 낚싯대 끝 위치 (말랑이 오른쪽 위)
+function rodTip(v) {
+  const g = v.geo;
+  const swing = fishing.phase === 'cast' ? -10 : fishing.phase === 'reel' || fishing.phase === 'show' ? -6 : 0;
+  return g ? [g.cx + g.rx + 30 + swing, g.cy - 24 + swing] : [v.x + 40, v.y - 50];
+}
+
+function drawPond(c, t) {
+  if (!state.focus) return;
+  const px = 3, cx = snap(pondX(), px), cy = snap(floorY() + 2, px);
+  const water = '#7FC4EC', deep = '#5FA8D6';
+  const cells = new Cells();
+  for (let y = -POND_RY; y < POND_RY; y++) {
+    for (let x = -POND_RX; x < POND_RX; x++) {
+      const dx = (x + 0.5) / POND_RX, dy = (y + 0.5) / POND_RY;
+      if (dx * dx + dy * dy <= 1) cells.set(x, y, y >= 0 ? deep : water);
+    }
+  }
+  // 반짝이는 물결
+  for (let i = 0; i < 3; i++) {
+    const x = Math.round(((t * 2 + i * 9) % (POND_RX * 2 - 6)) - POND_RX + 3);
+    if (cells.has(x, -1)) { cells.set(x, -1, T.shine); cells.set(x + 1, -1, T.shine); }
+  }
+  cells.outline(T.outline).draw(c, cx, cy, px);
+  // 연잎 · 부들
+  drawSprite(c, 'lily', cx + 6 * px, cy - 1 * px, px);
+  drawSprite(c, 'reed', cx + (POND_RX + 1) * px, cy, px);
+  drawSprite(c, 'reed', cx + (POND_RX - 1) * px, cy + px, px);
+}
+
+function drawFishing(c, t) {
+  const p = fisher();
+  if (!p || !state.focus) return;
+  const v = viewOf(p);
+  if (!v.fishing || !v.geo) return;
+  const [tx, ty] = rodTip(v);
+  const g = v.geo;
+  // 낚싯대: 말랑이 옆구리에서 위로 비스듬히
+  const bx = g.cx + g.rx - 2, by = g.cy;
+  c.fillStyle = T.pot;
+  const n = 24;
+  for (let i = 0; i <= n; i++) {
+    const x = bx + ((tx - bx) * i) / n, y = by + ((ty - by) * i) / n;
+    c.fillRect(snap(x, 2) - 1, snap(y, 2) - 1, 3, 3);
+  }
+  // 찌 위치: 기다릴 땐 둥실, 입질엔 쏙쏙
+  const wx = pondX() - 6;
+  let wy = floorY() - 4;
+  if (fishing.phase === 'wait') wy += Math.sin(t * 2.5) > 0.6 ? 2 : 0;
+  if (fishing.phase === 'bite') wy += Math.floor(t * 10) % 2 ? 6 : 0;
+  // 낚아 올리는 중엔 걸린 것이 물에서 낚싯대 끝으로 휙
+  let ex = wx, ey = wy;
+  if (fishing.phase === 'reel' && fishing.item) {
+    const k = 1 - fishing.t / 0.9;
+    ex = wx + (tx - wx) * k;
+    ey = wy + (ty + 26 - wy) * k - Math.sin(k * Math.PI) * 50;
+  } else if (fishing.phase === 'show') {
+    ex = tx; ey = ty + 26 + Math.sin(t * 12) * 2;   // 대롱대롱 (물고기는 파닥파닥)
+  } else if (fishing.phase === 'cast') {
+    ex = wx; ey = wy;
+  }
+  // 낚싯줄
+  c.strokeStyle = T.outline;
+  c.lineWidth = 1;
+  c.beginPath();
+  c.moveTo(tx + 0.5, ty + 0.5);
+  c.lineTo(ex + 0.5, ey - 4.5);
+  c.stroke();
+  if ((fishing.phase === 'reel' || fishing.phase === 'show') && fishing.item) {
+    drawSprite(c, fishing.item.sprite, ex, ey + 6, 2);
+  } else {
+    drawSprite(c, 'bobber', ex, ey, 2);
+  }
+}
+
 // ===================== 메인 루프 =====================
 let lastFrame = performance.now();
 function frame(now) {
@@ -1339,8 +1539,10 @@ function frame(now) {
   ctx.clearRect(0, 0, W, H);
   if (homeMark.shakeT > 0) homeMark.shakeT -= dt;
   drawHomeMark(ctx, t);
+  drawPond(ctx, t);
   drawPoops(ctx);
   updateSweeps(ctx, dt);
+  updateFishing(dt);
   for (const p of state.pets) updateView(p, viewOf(p), dt);
   updateVisitors(dt);
   socialize(dt, t);
@@ -1366,43 +1568,49 @@ function frame(now) {
   if (ball) drawBall(ctx);
   for (const f of foods) drawSprite(ctx, f.sprite, f.x, f.y, PX);
   drawGrime(ctx, t, dt);
+  drawFishing(ctx, t);
   updateScrub();
   updateParticles(ctx, dt);
 
   const cardFor = card.hidden ? null : state.selectedId;
-  const focusP = state.focus ? focusPet() : null;
+  const talker = focusPet();
+  const focusP = state.focus ? talker : null;
   for (const p of order) {
     const v = viewOf(p);
     if (!v.geo || v.held) continue;
     if (p.id === hoverId || p.id === cardFor) {
-      drawLabel(ctx, p.name, v.geo.cx, v.geo.top - 14);
+      const fishy = v.fishing && (fishing.fish || fishing.trash) ? ` · 물고기 ${fishing.fish} · 쓰레기 ${fishing.trash}` : '';
+      drawLabel(ctx, p.name + fishy, v.geo.cx, v.geo.top - 14);
       continue;
     }
-    if (myChat.length && p === focusPet()) continue;   // 대화 중인 말랑이는 대화 말풍선만
-    const top = v.geo.top;
+    // 집중 모드 말풍선이 먼저(맨 아래), 쪽지 말풍선은 그 위로 쌓인다
+    if (p === talker && (focusP || myChat.length)) continue;
     const icon = v.emote ? v.emote.icon : p.sleeping ? 'zee' : null;
-    if (icon) drawCloud(ctx, v.geo.cx, top, icon, t);
-    else if (v.speech) drawSpeech(ctx, v.speech.text, v.geo.cx, top);
-    else if (p === focusP) drawSpeech(ctx, '집중 중', v.geo.cx, top, 'focus');
+    if (icon) drawCloud(ctx, v.geo.cx, v.geo.top, icon, t);
+    else if (v.speech) drawSpeech(ctx, v.speech.text, v.geo.cx, v.geo.top);
   }
-  // 내가 보낸 쪽지는 내 말랑이가 말풍선으로 (다들 자고 있으면 집 표지 위에서)
+  // 내 말랑이(다들 자고 있으면 집 표지) 위: 집중 중 → 쪽지들
   ageChat(myChat, dt);
-  const talker = focusPet();
-  if (myChat.length) {
-    const tv = talker && viewOf(talker);
-    if (tv && tv.geo && !tv.held) drawChat(ctx, myChat, tv.geo.cx, tv.geo.top);
-    else if (!talker && homeMark.geo) drawChat(ctx, myChat, homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y);
+  const tv = talker && viewOf(talker);
+  const anchor = tv ? (tv.geo && !tv.held && talker.id !== hoverId && talker.id !== cardFor ? { cx: tv.geo.cx, top: tv.geo.top } : null)
+    : homeMark.geo ? { cx: homeMark.geo.x + homeMark.geo.w / 2, top: homeMark.geo.y } : null;
+  if (anchor) {
+    let top = anchor.top;
+    if (state.focus) top = drawSpeech(ctx, '집중 중', anchor.cx, top, 'focus');
+    if (myChat.length) drawChat(ctx, myChat, anchor.cx, top);
   }
-  // 다들 자고 있으면 집중 구름은 집 표지 위에
-  if (state.focus && !focusP && homeMark.geo && !myChat.length) drawSpeech(ctx, '집중 중', homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y, 'focus');
   // 놀러 온 친구네 말랑이는 쪽지(와 사진)를 말풍선으로 보여 준다
   for (const vis of visitors) {
     const v = vis.v;
     if (!v.geo) continue;
     if (vis.pet.id === hoverVisitor) { drawLabel(ctx, `${vis.nick}의 ${vis.pet.name}`, v.geo.cx, v.geo.top - 14); continue; }
-    // 쪽지가 오면 말풍선으로 말하고, 평소엔 그냥 같이 논다
-    if (vis.chat.length) drawChat(ctx, vis.chat, v.geo.cx, v.geo.top);
-    else if (v.emote) drawCloud(ctx, v.geo.cx, v.geo.top, v.emote.icon, t);
+    // 친구가 집중 중이면 집중 말풍선이 먼저, 쪽지는 그 위로. 평소엔 그냥 같이 논다
+    const st = friendStatus.get(vis.code) || {};
+    let top = v.geo.top;
+    if (st.focus) top = drawSpeech(ctx, '집중 중', v.geo.cx, top, 'focus');
+    if (vis.chat.length) drawChat(ctx, vis.chat, v.geo.cx, top);
+    else if (!st.focus && v.emote) drawCloud(ctx, v.geo.cx, top, v.emote.icon, t);
+    else if (!st.focus && vis.pet.sleeping) drawCloud(ctx, v.geo.cx, top, 'zee', t);
   }
 
   if (home.hidden && overHomeMark(mouse) && !hoverId && !(mouse.down && mouse.down.dragging)) {
@@ -2159,9 +2367,14 @@ $('hQuit').addEventListener('click', () => {
     quitArmed = setTimeout(() => { quitArmed = null; $('hQuit').textContent = '끄기'; }, 3000);
     return;
   }
-  persist();
-  window.malang.quit();
+  quitApp();
 });
+
+function quitApp() {
+  persist();
+  sayBye();
+  setTimeout(() => window.malang.quit(), 300);   // 작별 인사가 전해질 틈을 준다
+}
 $('wPlace').addEventListener('click', () => {
   const box = $('wEdit');
   box.hidden = !box.hidden;
@@ -2234,6 +2447,9 @@ function act(name) {
         p.wokeAt = Date.now();
         if (p.energy < 50) p.happy -= 5;
         toast(`${josa(p.name, '이', '가')} 일어났어요`);
+        // 일어나자마자 필요한 걸 말한다
+        say(v, needSpeech(p) || '잘 잤다!', 4);
+        v.bubbleT = rand(6, 9);
       } else {
         if (p.energy > 85) return toast('아직 졸리지 않대요');
         p.sleeping = true;
@@ -2451,6 +2667,7 @@ window.malang.onCommand((command) => {
   if (command === 'mark:reset') resetMark();
   if (command === 'friends') openFriends();
   if (command === 'focus') toggleFocus();
+  if (command === 'quit') quitApp();
   if (command === 'dnd') {
     state.dnd = !state.dnd;
     toast(state.dnd ? '방해 금지 모드: 전체화면 창이 앞에 있으면 숨어 있을게요' : '방해 금지 모드를 껐어요');
@@ -2472,11 +2689,12 @@ function handleEvents() {
       sick: `${josa(pet.name, '이', '가')} 아파요! 약을 먹여 주세요`,
       morning: `${josa(pet.name, '이', '가')} 기지개를 켜며 일어났어요`,
       nightSleep: `밤이 깊어 ${josa(pet.name, '이', '가')} 잠들었어요`,
+      rest: `${josa(pet.name, '이', '가')} 컨디션이 안 좋아서 쉬러 들어갔어요`,
     }[type];
     toast(msg);
     if (type === 'poop' && v) v.sv += 2;
     if (type === 'morning' && v) { v.stretchT = 1.2; say(v, '좋은 아침!', 2.5); }
-    if (type === 'sick' || type === 'faint') notify(msg);
+    if (type === 'sick' || type === 'faint' || type === 'rest') notify(msg);
   }
 }
 
@@ -2582,7 +2800,9 @@ function myPetInfo() {
   const p = focusPet() || state.pets.find((x) => stageOf(x) !== 'egg');
   return p ? { name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p) } : null;
 }
-const hello = () => ({ t: 'hi', code: state.myCode, nick: myNick(), focus: state.focus, pet: myPetInfo() });
+// 말랑이가 다 자고 있어도 앱이 켜져 있으면 온라인. 자는 중인지는 따로 알려 준다
+const mySleeping = () => state.pets.length > 0 && !focusPet();
+const hello = () => ({ t: 'hi', code: state.myCode, nick: myNick(), focus: state.focus, sleeping: mySleeping(), pet: myPetInfo() });
 
 function setupConn(conn) {
   conn.on('open', () => conn.send(hello()));
@@ -2612,10 +2832,11 @@ function onData(conn, d) {
       toast(`${cleanText(d.nick, 10) || fmtCode(code)}님과 친구가 됐어요`);
     }
     f.nick = cleanText(d.nick, 10) || f.nick;
-    friendStatus.set(code, { focus: !!d.focus });
+    friendStatus.set(code, { focus: !!d.focus, sleeping: !!d.sleeping });
+    lastSeen.set(code, Date.now());
     pending.delete(code);
     conns.set(code, conn);
-    if (d.pet && typeof d.pet === 'object') visitorFor(f, d.pet);
+    if (d.pet && typeof d.pet === 'object') visitorFor(f, d.pet).pet.sleeping = !!d.sleeping;
     persist();
     refreshFriends();
     return;
@@ -2624,10 +2845,17 @@ function onData(conn, d) {
   if (!entry) return;   // 인사 전에 온 건 무시
   const f = findFriend(entry[0]);
   if (!f) return;
+  lastSeen.set(f.code, Date.now());
+  if (d.t === 'bye') { conn.close(); dropConn(conn); return; }   // 친구가 앱을 껐다
   if (d.t === 'part') receivePart(conn, d);
   if (d.t === 'msg') receiveNote(f, d, takePhoto(conn, d.photo));
   if (d.t === 'shake') receiveShake(f);
-  if (d.t === 'status') { friendStatus.set(f.code, { focus: !!d.focus }); refreshFriends(); }
+  if (d.t === 'status') {
+    friendStatus.set(f.code, { focus: !!d.focus, sleeping: !!d.sleeping });
+    const vis = visitors.find((x) => x.code === f.code);
+    if (vis) vis.pet.sleeping = !!d.sleeping;
+    refreshFriends();
+  }
 }
 
 // 사진 조각 모으기 (조각 수·크기를 제한해서 너무 큰 건 버린다)
@@ -2659,8 +2887,29 @@ function logNote(entry) {
   if (noteLog.length > 60) noteLog.shift();
 }
 
+let statusKey = '';
 function broadcastStatus() {
-  for (const c of conns.values()) if (c.open) c.send({ t: 'status', focus: state.focus });
+  statusKey = `${state.focus}|${mySleeping()}`;
+  for (const c of conns.values()) if (c.open) c.send({ t: 'status', focus: state.focus, sleeping: mySleeping() });
+}
+
+// 10초마다 살아 있다고 알리고, 45초 동안 아무 소식이 없으면 꺼진 걸로 본다
+// (컴퓨터가 꺼지거나 인터넷이 끊긴 경우). 말랑이가 자는 것과는 상관없다.
+const lastSeen = new Map();
+let beatN = 0;
+function heartbeat() {
+  if (`${state.focus}|${mySleeping()}` !== statusKey) broadcastStatus();
+  if (++beatN % 10 !== 0) return;
+  const now = Date.now();
+  for (const [code, c] of [...conns]) {
+    if (now - (lastSeen.get(code) || now) > 45000) { c.close(); dropConn(c); continue; }
+    if (c.open) c.send({ t: 'ping' });
+  }
+}
+
+// 앱을 끌 때 친구들에게 바로 알린다
+function sayBye() {
+  for (const c of conns.values()) if (c.open) { try { c.send({ t: 'bye' }); } catch { /* 이미 끊김 */ } }
 }
 
 function receiveNote(f, d, img) {
@@ -2703,7 +2952,6 @@ function sendShake() {
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요');
   const f = findFriend(fTarget);
-  if ((friendStatus.get(fTarget) || {}).focus) return toast(`${friendName(f)}님은 집중 중이에요. 흔들기는 나중에!`);
   if (Date.now() - shakeSentAt < 3000) return toast('조금 있다가 다시 흔들어 주세요');
   shakeSentAt = Date.now();
   conn.send({ t: 'shake' });
@@ -2920,8 +3168,9 @@ function refreshFriends() {
       who.textContent = friendName(f);
       const sub = document.createElement('span');
       sub.className = 'sub';
-      const focusing = online && (friendStatus.get(f.code) || {}).focus;
-      sub.textContent = focusing ? '집중 중' : online ? '접속 중' : '꺼져 있음';
+      const st = friendStatus.get(f.code) || {};
+      const focusing = online && st.focus;
+      sub.textContent = focusing ? '집중 중' : online && st.sleeping ? '접속 중 · 쿨쿨' : online ? '접속 중' : '꺼져 있음';
       if (focusing) sub.classList.add('focus');
       const del = document.createElement('button');
       del.className = 'link warn';
@@ -3067,10 +3316,11 @@ setInterval(() => {
   if (++tick % 15 === 0) persist();
 }, 1000);
 setInterval(() => { refreshCard(); refreshHome(); }, 250);
-window.addEventListener('beforeunload', persist);
+window.addEventListener('beforeunload', () => { persist(); sayBye(); });
 
 startNet();
 setInterval(connectFriends, 30000);
+setInterval(heartbeat, 1000);
 fetchWeather();
 setInterval(fetchWeather, 30 * 60 * 1000);
 
