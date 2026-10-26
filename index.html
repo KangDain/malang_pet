@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>말랑이 키우기</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="toasts"></div>
+
+  <!-- 말랑이를 클릭하면 머리 위에 뜨는 돌봄 카드 -->
+  <div id="card" class="ui box" hidden>
+    <div class="head">
+      <span id="pName"></span>
+      <span id="pStage" class="tag"></span>
+      <span class="spacer"></span>
+      <button id="editBtn" class="link">수정</button>
+      <button id="closeCard" class="link">닫기</button>
+    </div>
+    <div class="meta"><span id="pAge"></span><span id="pStatus"></span></div>
+
+    <div class="stats">
+      <div class="stat"><span>배부름</span><div class="gauge" data-stat="hunger"></div></div>
+      <div class="stat"><span>기분</span><div class="gauge" data-stat="happy"></div></div>
+      <div class="stat"><span>청결</span><div class="gauge" data-stat="clean"></div></div>
+      <div class="stat"><span>기운</span><div class="gauge" data-stat="energy"></div></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" data-act="feed"><canvas class="ico" data-icon="onigiri"></canvas><span>밥</span></button>
+      <button class="btn" data-act="play"><canvas class="ico" data-icon="ball"></canvas><span>놀기</span></button>
+      <button class="btn" data-act="clean"><canvas class="ico" data-icon="drop"></canvas><span>씻기</span></button>
+      <button class="btn" data-act="sleep"><canvas class="ico" id="sleepIcon" data-icon="moon"></canvas><span id="sleepLabel">재우기</span></button>
+      <button class="btn" data-act="medicine"><canvas class="ico" data-icon="pill"></canvas><span>약</span></button>
+    </div>
+  </div>
+
+  <!-- 말랑이네 표지를 클릭하면 뜨는 작은 집 창 -->
+  <div id="home" class="ui box" hidden>
+    <div id="homeBar" class="titlebar">
+      <canvas class="ico" data-icon="twin"></canvas>
+      <span class="name">말랑이네</span>
+      <span id="homeCount" class="sub"></span>
+      <span class="spacer"></span>
+      <button id="homeClose" class="link">닫기</button>
+    </div>
+    <canvas id="room" width="276" height="150"></canvas>
+    <div class="home-actions">
+      <button class="btn" id="hAdopt">입양</button>
+      <button class="btn" id="hGather">모두 부르기</button>
+      <button class="btn" id="hTheme"></button>
+    </div>
+  </div>
+
+  <div id="modal" hidden>
+    <div class="sheet ui box">
+      <div id="mTitle" class="title"></div>
+      <canvas id="mPreview" width="176" height="128"></canvas>
+      <label class="field">
+        <span>이름</span>
+        <div class="row">
+          <input id="mName" maxlength="10" autocomplete="off">
+          <button id="mDice" class="btn small">추천</button>
+        </div>
+      </label>
+      <div class="field">
+        <span>새싹 모양</span>
+        <div class="row" id="mSprouts">
+          <button class="btn sprout" data-sprout="twin"><canvas class="ico" data-icon="twin"></canvas><span>떡잎</span></button>
+          <button class="btn sprout" data-sprout="single"><canvas class="ico" data-icon="single"></canvas><span>외잎</span></button>
+          <button class="btn sprout" data-sprout="flower"><canvas class="ico" data-icon="flower"></canvas><span>꽃봉오리</span></button>
+        </div>
+      </div>
+      <div class="row buttons">
+        <button id="mFarewell" class="link warn">작별하기</button>
+        <span class="spacer"></span>
+        <button id="mCancel" class="btn">취소</button>
+        <button id="mOk" class="btn primary">입양하기</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

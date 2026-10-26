@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.log
+# 디자인 참고용 스톡 이미지 (워터마크 있음 — 공개 저장소에 올리지 않는다)
+ex_img.jpg
