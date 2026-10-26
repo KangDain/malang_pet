@@ -143,3 +143,49 @@ canvas { image-rendering: pixelated; }
     inset 0 0 0 2px var(--fun);
 }
 .buttons { margin-top: 16px; }
+
+/* 말랑이 색깔 견본 — 그 색 말랑이가 들어 있다 */
+#mColors { gap: 4px; justify-content: space-between; }
+.swatch {
+  position: relative; width: 30px; height: 38px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.swatch:hover { background: var(--gauge_empty); }
+.swatch.on {
+  background: var(--bg);
+  box-shadow: 0 -2px 0 0 var(--pet), 0 2px 0 0 var(--pet), -2px 0 0 0 var(--pet), 2px 0 0 0 var(--pet);
+}
+.swatch canvas { display: block; pointer-events: none; }
+.swatch.custom {
+  background: linear-gradient(180deg, transparent 70%, #F2A7B8 70%, #F2A7B8 76%, #F3D36B 76%, #F3D36B 82%, #8FD9C0 82%, #8FD9C0 88%, #8EC5E8 88%, #8EC5E8 94%, #B9A3E3 94%);
+}
+.swatch.custom input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: none; padding: 0; }
+
+.home-actions + .home-actions { margin-top: 8px; }
+
+/* 친구 창 */
+#friends { position: fixed; width: 296px; padding: 0 10px 10px; animation: pop .12s steps(2); }
+#friends .field.first { margin-top: 0; }
+.input {
+  flex: 1; min-width: 0; width: 100%;
+  padding: 5px 8px;
+  border: none; outline: none;
+  font: inherit; color: var(--text);
+  background: var(--gauge_empty);
+  box-shadow: 0 -2px 0 0 var(--border), 0 2px 0 0 var(--border), -2px 0 0 0 var(--border), 2px 0 0 0 var(--border);
+}
+.input:focus { background: var(--bg); }
+.input::placeholder { color: var(--text_sub); }
+.code { flex: 1; font-weight: bold; font-size: 14px; letter-spacing: 1px; }
+#fList { display: grid; gap: 4px; margin-top: 10px; }
+.friend { display: flex; align-items: center; gap: 6px; padding: 3px 6px; cursor: pointer; }
+.friend:hover { background: var(--gauge_empty); }
+.friend.on { background: var(--gauge_empty); box-shadow: inset 2px 0 0 0 var(--pet); }
+.friend .dot { width: 6px; height: 6px; background: var(--text_sub); flex: none; }
+.friend .dot.online { background: var(--fun); }
+.friend .who { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend .sub { color: var(--text_sub); }
+#fLog { margin-top: 8px; color: var(--text_sub); display: grid; gap: 2px; }
+#fLog div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#fLog .in { color: var(--text); }

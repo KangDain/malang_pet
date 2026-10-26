@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('malang', {
   setIgnore: (ignore) => ipcRenderer.send('set-ignore', ignore),
   setTrayIcon: (dataUrl) => ipcRenderer.send('tray-icon', dataUrl),
   themeChanged: (theme) => ipcRenderer.send('theme-changed', theme),
+  prefsChanged: (prefs) => ipcRenderer.send('prefs-changed', prefs),
   onCommand: (cb) => ipcRenderer.on('command', (_e, command) => cb(command)),
 });

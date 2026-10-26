@@ -16,7 +16,8 @@
       "index.html",
       "style.css",
       "renderer.js",
-      "fonts/**"
+      "fonts/**",
+      "vendor/**"
     ],
     "win": {
       "target": "portable",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "electron": "^45.0.0",
-    "electron-builder": "^26.18.0"
+    "electron-builder": "^26.18.0",
+    "peerjs": "^1.5.4"
   }
 }

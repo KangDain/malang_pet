@@ -38,6 +38,39 @@ const NAMES = ['말랑이', '몰랑이', '찹쌀이', '모찌', '젤리', '푸�
 const SPROUTS = ['twin', 'single', 'flower'];
 const STAT_KEYS = ['hunger', 'happy', 'clean', 'energy'];
 
+// 어른이 될 때 그동안 받은 돌봄에 따라 모습이 갈린다 (dr/dh: 몸 크기 보정)
+const FORMS = {
+  chubby: { label: '통통이', dr: 2, dh: -1 },
+  sporty: { label: '날쌘이', dr: -1, dh: 2 },
+  shiny:  { label: '반짝이', dr: 0, dh: 0 },
+  sleepy: { label: '느긋이', dr: 1, dh: -2 },
+  royal:  { label: '으뜸이', dr: 0, dh: 1 },
+};
+const CARE_FORM = { feed: 'chubby', play: 'sporty', clean: 'shiny', sleep: 'sleepy' };
+const TENDENCY = { feed: '먹보', play: '개구쟁이', clean: '깔끔쟁이', sleep: '잠꾸러기' };
+const formOf = (p, st) => (st === 'adult' && Object.hasOwn(FORMS, p.form || '') ? FORMS[p.form] : null);
+
+// 가장 많이 받은 돌봄 [종류, 횟수]
+function topCare(p) {
+  const c = p.care || {};
+  let best = 'feed';
+  for (const k of Object.keys(CARE_FORM)) if ((c[k] || 0) > (c[best] || 0)) best = k;
+  return [best, c[best] || 0];
+}
+
+function decideForm(p) {
+  const c = p.care || {};
+  // 한 번도 안 아프고 골고루 돌봐 주면 으뜸이
+  if (!p.sickCount && ['feed', 'play', 'clean'].every((k) => (c[k] || 0) >= 5)) return 'royal';
+  const [k, n] = topCare(p);
+  return n > 0 ? CARE_FORM[k] : 'sleepy';
+}
+
+// 밤(22~6시)엔 졸리고, 아침(6~10시)엔 일어난다
+const hourOf = (now) => new Date(now).getHours();
+const isNight = (now) => hourOf(now) >= 22 || hourOf(now) < 6;
+const isMorning = (now) => hourOf(now) >= 6 && hourOf(now) < 10;
+
 // ===================== 도트 스프라이트 =====================
 // 글자 하나 = 한 칸. 공백은 투명. 테두리는 그릴 때 자동으로 둘러진다.
 const PAL = {
@@ -67,6 +100,8 @@ const SPR = {
   exclaim:  ['ww', 'ww', 'ww', '  ', 'ww'],
   sadDrop:  ['  c  ', ' ccc ', 'ccccc', 'cbccc', ' ccc '],
   dots:     ['s s s'],
+  letter:   ['bbbbbbb', 'bsbbbsb', 'bbsbsbb', 'bbbsbbb', 'bbbbbbb'],
+  crown:    ['h h h', 'hhhhh', 'hwhwh'],
   // 머리 위 새싹 (맨 아랫줄이 머리에 붙는다)
   twin:     ['ll   ll', 'lll lll', ' lllll ', '   l   '],
   single:   ['   ll', '  lll', ' lll ', '  l  '],
@@ -80,6 +115,19 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const snap = (v, px) => Math.round(v / px) * px;
 const $ = (id) => document.getElementById(id);
+
+// 친구 코드 8자리 (헷갈리는 0/O, 1/I 는 뺀다)
+function makeCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return [...crypto.getRandomValues(new Uint8Array(8))].map((b) => chars[b % chars.length]).join('');
+}
+
+// #RRGGBB 색을 k배만큼 어둡게
+function darken(hex, k) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (s) => Math.round(((n >> s) & 255) * k).toString(16).padStart(2, '0');
+  return '#' + ch(16) + ch(8) + ch(0);
+}
 
 // 받침 유무에 따라 조사를 붙인다: josa('모찌', '이', '가') → '모찌가'
 function josa(word, withBatchim, withoutBatchim) {
@@ -101,24 +149,45 @@ function loadState() {
   const s = window.malang.load();
   if (s && Array.isArray(s.pets)) {
     // 예전 버전(색상 선택)의 말랑이는 새싹 모양으로 바꿔 준다
-    for (const p of s.pets) if (!p.sprout) p.sprout = SPROUTS[Math.abs(Math.round(p.hue || 0)) % 3];
+    for (const p of s.pets) {
+      if (!p.sprout) p.sprout = SPROUTS[Math.abs(Math.round(p.hue || 0)) % 3];
+      if (!p.care) p.care = { feed: 0, play: 0, clean: 0, sleep: 0 };
+      p.sickCount = p.sickCount || 0;
+    }
     if (!s.theme) s.theme = 'system';
+    if (s.mark === undefined) s.mark = null;
+    s.markLocked = !!s.markLocked;
+    s.markHidden = !!s.markHidden;
+    if (s.dnd === undefined) s.dnd = true;
+    if (!Array.isArray(s.friends)) s.friends = [];
+    if (!Array.isArray(s.blocked)) s.blocked = [];
+    if (!s.myCode) s.myCode = makeCode();
+    if (typeof s.nick !== 'string') s.nick = '';
     return s;
   }
-  return { version: 2, lastSim: Date.now(), selectedId: null, theme: 'system', pets: [] };
+  // mark: 말랑이네 표지 위치 (화면 비율, null이면 오른쪽 아래 기본 자리)
+  return {
+    version: 2, lastSim: Date.now(), selectedId: null, theme: 'system', pets: [],
+    mark: null, markLocked: false, markHidden: false, dnd: true,
+    myCode: makeCode(), nick: '', friends: [], blocked: [],
+  };
 }
 const state = loadState();
 const persist = () => window.malang.save(state);
 
-function newPet(name, sprout) {
+function newPet(name, sprout, color = null) {
   return {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     name, sprout,
+    color,      // 몸 색 (#RRGGBB, null이면 테마 기본색)
     born: Date.now(),
     hunger: 80, happy: 80, clean: 100, energy: 90,
     sleeping: false, sick: false,
     sickMeter: 0, poopMeter: 0,
     poops: [],  // 화면 가로 위치(0~1)
+    care: { feed: 0, play: 0, clean: 0, sleep: 0 },   // 받은 돌봄 횟수 → 어른 모습
+    sickCount: 0,
+    form: null,
   };
 }
 
@@ -157,6 +226,7 @@ function applyTheme() {
   };
   for (const [k, v] of Object.entries(THEMES[name])) document.documentElement.style.setProperty('--' + k, v);
   renderIcons();
+  renderSwatches();
   renderGauges();
   $('hTheme').textContent = `테마: ${THEME_LABEL[state.theme]}`;
   trayKey = null;
@@ -197,11 +267,11 @@ class Cells {
 }
 
 // 스프라이트를 칸에 찍는다. (dx, dy)는 스프라이트 맨 아랫줄 가운데 칸의 위치
-function stamp(cells, rows, dx = 0, dy = 0) {
+function stamp(cells, rows, dx = 0, dy = 0, pal = T) {
   const ax = Math.floor(rows[0].length / 2), ay = rows.length - 1;
   rows.forEach((row, y) => {
     for (let x = 0; x < row.length; x++) {
-      if (row[x] !== ' ') cells.set(x - ax + dx, y - ay + dy, T[PAL[row[x]]]);
+      if (row[x] !== ' ') cells.set(x - ax + dx, y - ay + dy, pal[PAL[row[x]]]);
     }
   });
   return cells;
@@ -249,7 +319,9 @@ function drawEgg(c, p, v, r, h, t, ox, oy, px) {
 // 말랑이 한 마리를 칸 단위로 래스터라이즈해서 그린다
 function drawPet(c, p, v, st, t, groundY, px = PX) {
   const ox = snap(v.x, px), oy = snap(v.y, px);
-  const { r, h } = STAGES[st];
+  let { r, h } = STAGES[st];
+  const form = formOf(p, st);
+  if (form) { r += form.dr; h += form.dh; }
   drawShadow(c, v.x, groundY, r, clamp((groundY - v.y) / 200, 0, 1), px);
   if (st === 'egg') return drawEgg(c, p, v, r, h, t, ox, oy, px);
 
@@ -259,8 +331,10 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
   const hw = Math.max(3, Math.round(r * (1 + sq * 0.9)));   // 절반 너비
   const hh = Math.max(3, Math.round(h * (1 - sq)));         // 높이
 
-  const body = p.sick ? T.text_sub : T.pet;
-  const shade = p.sick ? T.border : T.leaf;
+  const body = p.sick ? T.text_sub : p.color || T.pet;
+  const shade = p.sick ? T.border : p.color ? darken(p.color, 0.8) : T.leaf;
+  // 몸 색을 바꾼 말랑이는 새싹도 같은 계열 색으로
+  const pal = p.color && !p.sick ? { ...T, leaf: darken(p.color, 0.68) } : T;
   const cells = new Cells();
   // 슬라임 모양: 위는 둥근 돔, 옆은 곧게, 바닥은 평평. 몸 가운데는 x=-1과 0 사이
   const dome = Math.max(2, Math.round(hh * 0.6));
@@ -279,10 +353,12 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
   const a = Math.max(1, Math.round(hw * 0.3)), b = Math.max(a + 1, Math.round(hw * 0.65));
   for (let x = a; x <= b; x++) shine(x, 1 - hh);
   shine(b, 2 - hh);
+  if (form === FORMS.shiny) { shine(-b - 1, 3 - hh); shine(-b, 4 - hh); shine(b + 1, 4 - hh); }
+  if (form === FORMS.royal) stamp(cells, SPR.crown, 0, -hh, pal);
 
   // 머리 위에 둥실 떠 있는 새싹
   const bob = v.held ? 0 : Math.sin(t * 3 + v.wob) > 0 ? 0 : 1;
-  stamp(cells, SPR[p.sprout] || SPR.twin, 0, -hh - 4 - bob);
+  stamp(cells, SPR[p.sprout] || SPR.twin, 0, -hh - 4 - bob, pal);
 
   cells.outline(T.outline);
 
@@ -380,13 +456,20 @@ function drawLabel(c, text, cx, y) {
 }
 
 // ===================== 말랑이네 (집 표지) =====================
-// 바탕화면 오른쪽 아래, 새싹이 든 네모 말풍선. 클릭하면 집 창이 열린다.
-const homeMark = { geo: null };
+// 새싹이 든 네모 말풍선. 클릭하면 집 창이 열리고, 고정을 풀면 끌어서 옮길 수 있다.
+const homeMark = { geo: null, ox: 0, oy: 0 };
+const MARK_W = 11 * 3, MARK_H = 12 * 3;   // 말풍선 + 꼬리 크기(px)
 
 function drawHomeMark(c, t) {
+  if (state.markHidden) { homeMark.geo = null; return; }
   const px = 3, wc = 11, hc = 9;
   const bob = Math.sin(t * 1.5) > 0 ? 0 : px;
-  const ox = snap(W - 64 - (wc * px) / 2, px), oy = snap(floorY() - (hc + 3) * px, px) - bob;
+  let ox = W - 64 - (wc * px) / 2, oy = floorY() - (hc + 3) * px;
+  if (state.mark) { ox = state.mark.x * W; oy = state.mark.y * H; }
+  ox = snap(clamp(ox, 4, W - MARK_W - 4), px);
+  oy = snap(clamp(oy, 4, H - MARK_H - 4), px);
+  homeMark.ox = ox; homeMark.oy = oy;
+  if (!(mouse.down && mouse.down.mark && mouse.down.dragging)) oy -= bob;
   const cells = new Cells();
   for (let y = 0; y < hc; y++) {
     for (let x = 0; x < wc; x++) {
@@ -405,6 +488,32 @@ const overHomeMark = (pt) => {
   return !!g && pt.x >= g.x && pt.x <= g.x + g.w && pt.y >= g.y && pt.y <= g.y + g.h;
 };
 
+// 표지·방해 금지 설정이 바뀌면 집 창 버튼과 트레이 메뉴에 알린다
+function prefsChanged() {
+  $('hLock').textContent = state.markLocked ? '표지 고정 풀기' : '표지 고정';
+  $('hHide').textContent = state.markHidden ? '표지 보이기' : '표지 숨기기';
+  window.malang.prefsChanged({ hidden: state.markHidden, locked: state.markLocked, dnd: state.dnd });
+  persist();
+}
+
+function toggleMarkLock() {
+  state.markLocked = !state.markLocked;
+  toast(state.markLocked ? '말랑이네 표지를 고정했어요' : '이제 표지를 끌어서 옮길 수 있어요');
+  prefsChanged();
+}
+
+function toggleMarkHidden() {
+  state.markHidden = !state.markHidden;
+  if (state.markHidden) toast('표지를 숨겼어요. 트레이 메뉴에서 다시 열 수 있어요');
+  prefsChanged();
+}
+
+function resetMark() {
+  state.mark = null;
+  state.markHidden = false;
+  prefsChanged();
+}
+
 // ===================== 시간 흐름 =====================
 const pendingEvents = [];
 
@@ -412,24 +521,35 @@ const pendingEvents = [];
 function simulate(p, dtH, now) {
   if (stageOf(p, now) === 'egg') return;
   const sickMul = p.sick ? 1.5 : 1;
+  const night = isNight(now);
 
   if (p.sleeping) {
+    // 옆에서 같이 자면 더 푹 자고 외롭지 않다
+    const cozy = sleepBuddy(p);
     p.hunger -= 5 * dtH;
-    p.happy -= 2 * dtH;
+    p.happy -= (cozy ? 0 : 2) * dtH;
     p.clean -= 2 * dtH;
-    p.energy += 30 * dtH;
-    if (p.energy >= 100) {
+    p.energy += 30 * dtH * (cozy ? 1.3 : 1);
+    // 밤에는 기운이 다 차도 아침까지 자고, 아침엔 웬만큼 찼으면 일어난다
+    const morning = isMorning(now) && p.energy >= 70 && now - (p.sleptAt || 0) > HOUR;
+    if (!night && (p.energy >= 100 || morning)) {
       p.sleeping = false;
-      pendingEvents.push({ type: 'wake', pet: p });
+      pendingEvents.push({ type: isMorning(now) ? 'morning' : 'wake', pet: p });
     }
   } else {
     p.hunger -= 16 * dtH * sickMul;
     p.happy -= 10 * dtH * sickMul;
     p.clean -= 6 * dtH;
-    p.energy -= 9 * dtH;
+    p.energy -= 9 * dtH * (night ? 1.6 : 1);
     if (p.energy <= 0) {
       p.sleeping = true;
+      p.sleptAt = now;
       pendingEvents.push({ type: 'faint', pet: p });
+    } else if (night && p.energy < 50 && !p.sick && now - (p.wokeAt || 0) > HOUR / 2) {
+      // 밤이 깊으면 스르르 잠든다 (방금 깨웠으면 30분은 봐준다)
+      p.sleeping = true;
+      p.sleptAt = now;
+      pendingEvents.push({ type: 'nightSleep', pet: p });
     }
     p.poopMeter += dtH * 0.6;
     if (p.poopMeter >= 1) {
@@ -454,6 +574,7 @@ function simulate(p, dtH, now) {
       if (p.sickMeter > 1.5) {
         p.sick = true;
         p.sickMeter = 0;
+        p.sickCount = (p.sickCount || 0) + 1;
         pendingEvents.push({ type: 'sick', pet: p });
       }
     } else {
@@ -461,6 +582,12 @@ function simulate(p, dtH, now) {
     }
   }
   clampStats(p);
+}
+
+function sleepBuddy(p) {
+  const v = views.get(p.id);
+  if (!v) return false;
+  return state.pets.some((o) => o !== p && o.sleeping && views.has(o.id) && Math.abs(views.get(o.id).x - v.x) < 70);
 }
 
 // 마지막 계산 시점부터 to까지 1분 단위로 진행 (앱이 꺼져 있던 시간도 포함)
@@ -543,6 +670,7 @@ function hop(p, v) {
     if (Math.abs(dx) < 30) {
       v.goalT = 0;
       v.hopT = rand(1.5, 3);
+      arrive(p, v);
       return;
     }
     const dir = Math.sign(dx);
@@ -554,11 +682,27 @@ function hop(p, v) {
     return;
   }
 
+  const form = formOf(p, stageOf(p));
+  const jump = form === FORMS.sporty ? 1.2 : 1;
+
+  // 공이 있으면 쫓아간다
+  if (ball && !p.sick && (p.visitor || p.energy > 5)) {
+    const dx = ball.x - v.x;
+    const dir = Math.sign(dx) || v.face;
+    v.face = dir;
+    v.vx = dir * Math.min(Math.abs(dx) * 1.8, rand(200, 320));
+    v.vy = -rand(300, 460) * jump;
+    v.sv -= 2;
+    v.hopT = rand(0.2, 0.5);
+    return;
+  }
+
   const playing = v.playT > 0;
   v.hopT = playing ? rand(0.25, 0.6)
     : p.sick ? rand(5, 10)
     : moodOf(p) === 'sad' ? rand(4, 8)
     : rand(1.5, 4.5);
+  if (form === FORMS.sleepy) v.hopT *= 1.5;
   if (!playing && Math.random() < 0.35) { v.sv += 1.2; return; } // 제자리에서 꿈틀
 
   let dir = Math.random() < 0.5 ? -1 : 1;
@@ -566,8 +710,56 @@ function hop(p, v) {
   if (v.x > W - 120) dir = -1;
   v.face = dir;
   v.vx = dir * rand(50, 150) * (playing ? 1.3 : 1);
-  v.vy = -(playing ? rand(380, 520) : rand(200, 320));
+  v.vy = -(playing ? rand(380, 520) : rand(200, 320)) * jump;
   v.sv -= playing ? 3 : 2;
+}
+
+// 목적지에 닿았을 때: 같이 자러 왔거나, 친구를 만나러 왔거나
+function arrive(p, v) {
+  if (v.joinSleep) {
+    const buddy = state.pets.find((x) => x.id === v.joinSleep);
+    v.joinSleep = null;
+    if (buddy && buddy.sleeping && !p.sleeping) {
+      p.sleeping = true;
+      p.sleptAt = Date.now();
+      v.emote = null; v.speech = null;
+      toast(`${p.name}도 ${buddy.name} 옆에서 잠들었어요`);
+    }
+  }
+  if (v.meet) {
+    const other = state.pets.find((x) => x.id === v.meet);
+    v.meet = null;
+    if (!other) return;
+    if (other.sleeping) return say(v, '쉿.. 자고 있네', 2);
+    greet(p, v, other, viewOf(other));
+  }
+}
+
+// 두 말랑이가 하트를 주고받는다
+function greet(a, va, b, vb) {
+  pairCool.set(pairKey(a, b), performance.now() / 1000 + 5);
+  setEmote(va, 'heart'); setEmote(vb, 'heart');
+  va.squint = vb.squint = 0.8;
+  va.sv += 2; vb.sv += 2;
+  emit((va.x + vb.x) / 2, Math.min(va.y, vb.y) - 40, 'heart', { n: 2, spread: 40, up: 100 });
+  for (const p of [a, b]) if (!p.visitor) p.happy = clamp(p.happy + 3, 0, 100);
+}
+
+// 졸린 말랑이들이 옆으로 와서 같이 잔다
+function callSleepBuddies(p) {
+  const v = viewOf(p);
+  let n = 0;
+  for (const o of state.pets) {
+    if (o === p || o.sleeping || o.sick || o.energy >= 60 || stageOf(o) === 'egg') continue;
+    const ov = viewOf(o);
+    if (ov.held) continue;
+    n++;
+    ov.goal = clamp(v.x + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 50, 40, W - 40);
+    ov.goalT = 15;
+    ov.joinSleep = p.id;
+    ov.hopT = rand(0.2, 0.8);
+    say(ov, '나도 졸려..', 2);
+  }
 }
 
 // 원하는 게 있을 때 하는 말
@@ -605,8 +797,23 @@ function updateView(p, v, dt) {
   }
   v.stage = st;
 
+  if (st === 'adult' && !p.form && !p.visitor) {
+    p.form = decideForm(p);
+    emit(v.x, v.y - 30, 'sparkle', { n: 8, spread: 140, up: 240 });
+    v.sv -= 4; v.vy = -450;
+    setEmote(v, 'sparkle', 2.5);
+    toast(`${josa(p.name, '이', '가')} 어른 ${FORMS[p.form].label}로 자랐어요!`);
+    persist();
+  }
+
   // 먹는 중엔 오물오물 들썩
   v.sTarget = v.eatT > 0 && Math.floor(v.eatT * 8) % 2 ? 0.14 : 0;
+  // 기지개: 위로 쭉 늘어난다
+  if (v.stretchT > 0) { v.stretchT -= dt; v.sTarget = -0.4; }
+  // 반짝이는 가끔 반짝반짝
+  if (formOf(p, st) === FORMS.shiny && !p.sleeping && v.geo && Math.random() < dt * 0.5) {
+    emit(v.geo.cx + rand(-v.geo.rx, v.geo.rx), v.geo.cy, 'sparkle', { n: 1, spread: 10, up: 50, life: 0.8 });
+  }
   if (v.held) {
     const nx = clamp(mouse.x, r, W - r);
     const ny = clamp(mouse.y + r * 0.9, r * 2, fy);
@@ -650,6 +857,7 @@ function updateView(p, v, dt) {
   v.playT = Math.max(0, v.playT - dt);
   v.squint = Math.max(0, v.squint - dt);
   v.goalT = Math.max(0, v.goalT - dt);
+  if (v.goalT === 0) { v.joinSleep = null; v.meet = null; }
 
   if (st !== 'egg' && !v.held) {
     v.bubbleT -= dt;
@@ -660,8 +868,10 @@ function updateView(p, v, dt) {
         v.bubbleT = rand(7, 11);
       } else {
         v.bubbleT = rand(6, 12);
-        // 할 말이 없으면 가끔 기분을 구름으로
-        if (!v.emote && !p.sleeping && Math.random() < 0.4) {
+        // 밤엔 하품, 아니면 가끔 기분을 구름으로
+        if (!v.emote && !p.sleeping && isNight(Date.now()) && Math.random() < 0.5) {
+          say(v, pick(['하암..', '졸려..', '밤이 깊었네']), 2);
+        } else if (!v.emote && !p.sleeping && Math.random() < 0.4) {
           const mood = moodOf(p);
           setEmote(v, mood === 'happy' ? pick(['note', 'heart']) : mood === 'sad' ? 'sadDrop' : 'dots', 2);
         }
@@ -708,13 +918,128 @@ function eat(p, v) {
 function gather() {
   const awake = state.pets.filter((p) => !p.sleeping && stageOf(p) !== 'egg');
   if (!awake.length) return toast('다들 자고 있어요');
+  // 표지가 있는 곳 아래로 모인다
+  const g = homeMark.geo;
+  const base = g ? g.x + g.w / 2 : W - 120;
+  const dir = base > W / 2 ? -1 : 1;
   awake.forEach((p, i) => {
     const v = viewOf(p);
-    v.goal = W - 120 - i * 46;
+    v.goal = clamp(base + dir * i * 56, 40, W - 40);
     v.goalT = 20;
     v.hopT = rand(0, 0.4);
   });
   toast('말랑이들아 집으로 모여라~');
+}
+
+// ===================== 말랑이끼리 =====================
+const pairCool = new Map();   // 두 말랑이가 다시 반응할 수 있는 시각
+const pairKey = (a, b) => (a.id < b.id ? a.id + '|' + b.id : b.id + '|' + a.id);
+let meetT = rand(20, 40);
+
+function socialize(dt, now) {
+  const all = [...state.pets, ...visitors.map((x) => x.pet)]
+    .filter((p) => stageOf(p) !== 'egg' && !p.sleeping && !viewOf(p).held);
+  // 부딪히면 통 튕기고, 둘 다 기분이 좋으면 하트를 주고받는다
+  for (let i = 0; i < all.length; i++) {
+    for (let j = i + 1; j < all.length; j++) {
+      const a = all[i], b = all[j];
+      const va = viewOf(a), vb = viewOf(b);
+      const reach = (STAGES[stageOf(a)].r + STAGES[stageOf(b)].r) * PX * 0.8;
+      const dx = vb.x - va.x;
+      if (Math.abs(dx) > reach || Math.abs(va.y - vb.y) > 30) continue;
+      const k = pairKey(a, b);
+      if ((pairCool.get(k) || 0) > now) continue;
+      pairCool.set(k, now + 4);
+      const dir = Math.sign(dx) || 1;
+      va.vx -= dir * 160; va.vy = Math.min(va.vy, -200); va.sv += 2;
+      vb.vx += dir * 160; vb.vy = Math.min(vb.vy, -200); vb.sv += 2;
+      if (moodOf(a) !== 'sad' && moodOf(b) !== 'sad' && Math.random() < 0.6) greet(a, va, b, vb);
+      else setEmote(Math.random() < 0.5 ? va : vb, 'exclaim', 1);
+    }
+  }
+  // 가끔 한 마리가 다른 말랑이에게 놀러 간다
+  if ((meetT -= dt) > 0) return;
+  meetT = rand(20, 40);
+  const free = state.pets.filter((p) => stageOf(p) !== 'egg' && !p.sleeping && !p.sick && viewOf(p).goalT <= 0 && !viewOf(p).held);
+  if (free.length < 2 || ball) return;
+  const a = pick(free), b = pick(free.filter((x) => x !== a));
+  const va = viewOf(a), vb = viewOf(b);
+  va.meet = b.id;
+  va.goal = vb.x - Math.sign(vb.x - va.x) * 36;
+  va.goalT = 10;
+  va.hopT = 0;
+  setEmote(va, 'note', 1.2);
+}
+
+// ===================== 공놀이 =====================
+const BALL_R = 9;
+let ball = null;   // { x, y, vx, vy, t, hits, held, cool }
+
+function startBall(v) {
+  if (ball) { ball.t = 20; return; }
+  ball = { x: clamp(v.x + v.face * 90, 40, W - 40), y: Math.max(40, v.y - 200), vx: 0, vy: 0, t: 20, hits: 0, held: false, cool: 0 };
+  toast('공놀이 시작! 공을 끌어서 던져 줘도 돼요');
+}
+
+const ballAt = (pt) => !!ball && Math.hypot(pt.x - ball.x, pt.y - ball.y) < BALL_R + 8;
+
+function updateBall(dt) {
+  if (!ball) return;
+  const b = ball;
+  b.cool -= dt;
+  if ((b.t -= dt) <= 0) {
+    emit(b.x, b.y, 'sparkle', { n: 4, spread: 60, up: 120 });
+    toast(b.hits ? `공놀이 끝! 모두 ${b.hits}번 찼어요` : '공놀이 끝!');
+    ball = null;
+    return;
+  }
+  if (b.held) {
+    const idt = 1 / Math.max(dt, 1e-3);
+    b.vx = b.vx * 0.6 + (mouse.x - b.x) * idt * 0.4;
+    b.vy = b.vy * 0.6 + (mouse.y - b.y) * idt * 0.4;
+    b.x = clamp(mouse.x, BALL_R, W - BALL_R);
+    b.y = clamp(mouse.y, BALL_R, floorY() - BALL_R);
+    return;
+  }
+  b.vy += GRAVITY * 0.8 * dt;
+  b.x += b.vx * dt;
+  b.y += b.vy * dt;
+  const fy = floorY() - BALL_R;
+  if (b.y >= fy) {
+    b.y = fy;
+    b.vy = Math.abs(b.vy) > 120 ? -b.vy * 0.6 : 0;
+    b.vx *= Math.pow(0.2, dt);
+  }
+  if (b.x < BALL_R) { b.x = BALL_R; b.vx = Math.abs(b.vx) * 0.7; }
+  if (b.x > W - BALL_R) { b.x = W - BALL_R; b.vx = -Math.abs(b.vx) * 0.7; }
+  if (b.y < BALL_R) { b.y = BALL_R; b.vy = Math.abs(b.vy) * 0.5; }
+
+  // 말랑이가 공에 닿으면 톡 찬다
+  if (b.cool > 0) return;
+  for (const p of [...state.pets, ...visitors.map((x) => x.pet)]) {
+    const v = viewOf(p), g = v.geo;
+    if (!g || p.sleeping || v.held || stageOf(p) === 'egg') continue;
+    const dx = (b.x - g.cx) / (g.rx + BALL_R), dy = (b.y - g.cy) / (g.ry + BALL_R);
+    if (dx * dx + dy * dy > 1) continue;
+    b.vx = (Math.sign(b.x - g.cx) || v.face) * rand(250, 450);
+    b.vy = -rand(450, 650);
+    b.cool = 0.3;
+    b.hits++;
+    v.sv += 2; v.squint = 0.6;
+    v.playT = Math.max(v.playT, 1.5);
+    if (Math.random() < 0.4) setEmote(v, 'note', 1);
+    if (!p.visitor) {
+      p.happy += 4; p.energy -= 1.5; p.hunger -= 1;
+      p.care.play += 0.25;
+      clampStats(p);
+    }
+    break;
+  }
+}
+
+function drawBall(c) {
+  if (ball.t < 3 && Math.floor(ball.t * 8) % 2) return;   // 끝나갈 때 깜빡깜빡
+  drawSprite(c, 'ball', ball.x, ball.y + 4, 3);
 }
 
 function drawPoops(c) {
@@ -747,6 +1072,9 @@ function frame(now) {
   drawHomeMark(ctx, t);
   drawPoops(ctx);
   for (const p of state.pets) updateView(p, viewOf(p), dt);
+  updateVisitors(dt);
+  socialize(dt, t);
+  updateBall(dt);
   updateFoods(dt);
 
   // 선택된 말랑이(와 들고 있는 말랑이)를 맨 위에 그린다
@@ -754,7 +1082,9 @@ function frame(now) {
     const score = (p) => (viewOf(p).held ? 2 : 0) + (p.id === state.selectedId ? 1 : 0);
     return score(a) - score(b);
   });
+  for (const vis of visitors) drawPet(ctx, vis.pet, vis.v, stageOf(vis.pet), t, fy);
   for (const p of order) drawPet(ctx, p, viewOf(p), stageOf(p), t, fy);
+  if (ball) drawBall(ctx);
   for (const f of foods) drawSprite(ctx, f.sprite, f.x, f.y, PX);
   updateParticles(ctx, dt);
 
@@ -770,14 +1100,23 @@ function frame(now) {
     if (icon) drawCloud(ctx, v.geo.cx, v.geo.top, icon, t);
     else if (v.speech) drawSpeech(ctx, v.speech.text, v.geo.cx, v.geo.top);
   }
+  // 놀러 온 친구네 말랑이는 쪽지를 말풍선으로 보여 준다
+  for (const vis of visitors) {
+    const v = vis.v;
+    if (!v.geo) continue;
+    if (vis.pet.id === hoverVisitor) drawLabel(ctx, `${vis.nick}의 ${vis.pet.name}`, v.geo.cx, v.geo.top - 14);
+    else if (v.emote) drawCloud(ctx, v.geo.cx, v.geo.top, v.emote.icon, t);
+    else drawSpeech(ctx, vis.text, v.geo.cx, v.geo.top);
+  }
 
-  if (home.hidden && overHomeMark(mouse) && !hoverId) {
-    drawLabel(ctx, '말랑이네', homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y - 12);
+  if (home.hidden && overHomeMark(mouse) && !hoverId && !(mouse.down && mouse.down.dragging)) {
+    drawLabel(ctx, state.markLocked ? '말랑이네 · 고정됨' : '말랑이네', homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y - 12);
   }
   if (!home.hidden) drawRoom(t, dt);
 
   placeCard();
   placeHome();
+  placeFriends();
   updateHover();
   if (!modal.hidden) drawPreview(t);
   requestAnimationFrame(frame);
@@ -801,9 +1140,14 @@ function updateHover() {
   const pt = { x: mouse.x, y: mouse.y };
   const p = petAt(pt);
   hoverId = p ? p.id : null;
-  const clickable = p || poopAt(pt) || overHomeMark(pt);
+  const vis = p ? null : visitorAt(pt);
+  hoverVisitor = vis ? vis.pet.id : null;
+  const onBall = !p && ballAt(pt);
+  const onMark = !p && !vis && overHomeMark(pt);
+  const clickable = p || vis || onBall || poopAt(pt) || onMark;
   setInteractive(!!(mouse.down || uiDrag || clickable || overUi(pt.x, pt.y)));
-  canvas.style.cursor = mouse.down && mouse.down.dragging ? 'grabbing' : p ? 'grab' : clickable ? 'pointer' : 'default';
+  canvas.style.cursor = mouse.down && mouse.down.dragging ? 'grabbing'
+    : p || onBall || (onMark && !state.markLocked) ? 'grab' : clickable ? 'pointer' : 'default';
 }
 
 window.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
@@ -842,6 +1186,14 @@ canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
     return;
   }
+  if (ballAt(pt)) {
+    ball.held = true;
+    mouse.down = { ball: true, x: pt.x, y: pt.y, dragging: true };
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
+  const vis = visitorAt(pt);
+  if (vis) return visitorClicked(vis);
   const hit = poopAt(pt);
   if (hit) {
     hit.p.poops.splice(hit.i, 1);
@@ -850,12 +1202,26 @@ canvas.addEventListener('pointerdown', (e) => {
     persist();
     return;
   }
-  if (overHomeMark(pt)) toggleHome();
+  if (overHomeMark(pt)) {
+    if (state.markLocked) return toggleHome();
+    // 고정이 풀려 있으면 끌어서 옮길 수 있다 (안 움직이고 떼면 클릭)
+    mouse.down = { mark: true, x: pt.x, y: pt.y, offX: pt.x - homeMark.ox, offY: pt.y - homeMark.oy, dragging: false };
+    canvas.setPointerCapture(e.pointerId);
+  }
 });
 
 canvas.addEventListener('pointermove', (e) => {
   mouse.x = e.clientX; mouse.y = e.clientY;
   const d = mouse.down;
+  if (d && d.ball) return;
+  if (d && d.mark) {
+    if (!d.dragging && Math.hypot(mouse.x - d.x, mouse.y - d.y) > 6) d.dragging = true;
+    if (d.dragging) {
+      const x = clamp(mouse.x - d.offX, 4, W - MARK_W - 4), y = clamp(mouse.y - d.offY, 4, H - MARK_H - 4);
+      state.mark = { x: x / W, y: y / H };
+    }
+    return;
+  }
   if (d && !d.dragging && Math.hypot(mouse.x - d.x, mouse.y - d.y) > 6) {
     const p = state.pets.find((x) => x.id === d.id);
     if (!p) { mouse.down = null; return; }
@@ -874,6 +1240,19 @@ canvas.addEventListener('pointerup', () => {
   const d = mouse.down;
   mouse.down = null;
   if (!d) return;
+  if (d.ball) {
+    if (ball) {
+      ball.held = false;
+      ball.vx = clamp(ball.vx, -1400, 1400);
+      ball.vy = clamp(ball.vy, -1400, 1400);
+    }
+    return;
+  }
+  if (d.mark) {
+    if (d.dragging) persist();
+    else toggleHome();
+    return;
+  }
   const p = state.pets.find((x) => x.id === d.id);
   if (!p) return;
   const v = viewOf(p);
@@ -949,10 +1328,12 @@ function toggleHome() {
 }
 
 function placeHome() {
-  if (home.hidden || !homeMark.geo) return;
+  if (home.hidden) return;
   const w = home.offsetWidth, h = home.offsetHeight;
-  const left = homePos ? homePos.x : homeMark.geo.x + homeMark.geo.w - w;
-  const top = homePos ? homePos.y : homeMark.geo.y - h - 14;
+  // 표지를 숨겼으면 오른쪽 아래에 연다
+  const g = homeMark.geo || { x: W - 20, y: floorY(), w: 0 };
+  const left = homePos ? homePos.x : g.x + g.w - w;
+  const top = homePos ? homePos.y : g.y - h - 14;
   home.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
   home.style.top = Math.round(clamp(top, 10, H - h - 10)) + 'px';
 }
@@ -1088,20 +1469,23 @@ roomCanvas.addEventListener('pointerdown', (e) => {
 });
 
 // 제목줄을 끌어서 창 옮기기
-$('homeBar').addEventListener('pointerdown', (e) => {
-  if (e.target.closest('button')) return;
-  const r = home.getBoundingClientRect();
-  const off = { x: e.clientX - r.left, y: e.clientY - r.top };
-  uiDrag = true;
-  const move = (ev) => { homePos = { x: ev.clientX - off.x, y: ev.clientY - off.y }; };
-  const up = () => {
-    uiDrag = false;
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
-});
+function dragBy(bar, box, setPos) {
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    const r = box.getBoundingClientRect();
+    const off = { x: e.clientX - r.left, y: e.clientY - r.top };
+    uiDrag = true;
+    const move = (ev) => setPos({ x: ev.clientX - off.x, y: ev.clientY - off.y });
+    const up = () => {
+      uiDrag = false;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+}
+dragBy($('homeBar'), home, (pos) => { homePos = pos; });
 
 // 게이지: 10칸짜리 도트 막대
 function renderGauges() {
@@ -1118,7 +1502,10 @@ function refreshCard() {
   const st = stageOf(p);
   const age = Date.now() - p.born;
   $('pName').textContent = p.name;
-  $('pStage').textContent = STAGES[st].label;
+  const form = formOf(p, st);
+  const [care, n] = topCare(p);
+  const tend = !form && st !== 'egg' && n >= 3 ? TENDENCY[care] : null;
+  $('pStage').textContent = STAGES[st].label + (form ? ` · ${form.label}` : tend ? ` · ${tend}` : '');
   $('pAge').textContent = st === 'egg'
     ? `부화까지 ${Math.ceil((EGG_MS - age) / 1000)}초`
     : `태어난 지 ${fmtDuration(age - EGG_MS)}`;
@@ -1156,6 +1543,9 @@ $('hGather').addEventListener('click', gather);
 $('hTheme').addEventListener('click', () => {
   setTheme({ system: 'light', light: 'dark', dark: 'system' }[state.theme] || 'system');
 });
+$('hLock').addEventListener('click', toggleMarkLock);
+$('hHide').addEventListener('click', toggleMarkHidden);
+$('hFriends').addEventListener('click', openFriends);
 // 바탕화면 등 다른 곳을 클릭하면 카드를 닫는다 (집 창은 직접 닫을 때까지 둔다)
 window.addEventListener('blur', closeCard);
 
@@ -1188,20 +1578,25 @@ function act(name) {
     case 'feed':
       if (p.sleeping) return asleep();
       if (foods.some((f) => f.petId === p.id)) return;
+      p.care.feed++;
       foods.push({ petId: p.id, x: v.x, y: v.y - r * 2 - 240, vy: 0, sprite: pick(FOODS) });
       break;
     case 'play':
       if (p.sleeping) return asleep();
       if (p.sick) return toast('아파서 놀 수 없어요. 약을 먹여 주세요');
       if (p.energy < 15) return toast('너무 피곤해요.. 재워 주세요');
-      p.happy += 18; p.energy -= 12; p.hunger -= 6;
+      // 기분은 공을 찰 때마다 조금씩 오른다
+      p.happy += 6; p.energy -= 3;
+      p.care.play++;
       v.playT = 4; v.hopT = 0;
-      setEmote(v, 'note', 4);
+      setEmote(v, 'note', 2);
+      startBall(v);
       break;
     case 'clean':
       for (const f of p.poops) emit(poopX(f), floorY() - 10, 'sparkle', { n: 2, spread: 40 });
       p.poops = [];
       p.clean = 100;
+      p.care.clean++;
       p.happy += 3;
       v.sv += 2;
       emit(v.x, v.y - r, 'ring', { n: 8, spread: r * 2, up: 160, gravity: -60, px: 2 });
@@ -1210,12 +1605,16 @@ function act(name) {
     case 'sleep':
       if (p.sleeping) {
         p.sleeping = false;
+        p.wokeAt = Date.now();
         if (p.energy < 50) p.happy -= 5;
         toast(`${josa(p.name, '이', '가')} 일어났어요`);
       } else {
         if (p.energy > 85) return toast('아직 졸리지 않대요');
         p.sleeping = true;
+        p.sleptAt = Date.now();
+        p.care.sleep++;
         toast(`${josa(p.name, '아', '야')} 잘 자~`);
+        callSleepBuddies(p);
       }
       break;
     case 'medicine':
@@ -1251,12 +1650,13 @@ let trayKey = null;
 function updateTrayIcon() {
   const p = selected() || state.pets[0];
   const sprout = p ? p.sprout : 'twin';
-  if (trayKey === sprout + T.pet) return;
-  trayKey = sprout + T.pet;
+  const color = p ? p.color : null;
+  if (trayKey === sprout + T.pet + color) return;
+  trayKey = sprout + T.pet + color;
   const c = document.createElement('canvas');
   c.width = c.height = 32;
   const x = c.getContext('2d');
-  const fake = { sprout, hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
+  const fake = { sprout, color, form: null, hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
   const v = { x: 16, y: 31, s: 0, face: 0, wob: 0, blink: 0, squint: 0, eatT: 0, playT: 0, held: false };
   drawPet(x, fake, v, 'baby', 0, 999, 2);
   window.malang.setTrayIcon(c.toDataURL());
@@ -1269,6 +1669,7 @@ const previewCtx = $('mPreview').getContext('2d');
 const previewView = { x: 88, y: 116, s: 0, sv: 0, face: 1, wob: 0, blink: 0, blinkT: 2, squint: 0, eatT: 0, playT: 0, held: false };
 let modalMode = null;
 let modalSprout = 'twin';
+let modalColor = null;
 let farewellArmed = false;
 
 function suggestName() {
@@ -1283,6 +1684,36 @@ function setModalSprout(s) {
   previewView.sv += 2;
 }
 
+function setModalColor(color) {
+  modalColor = color || null;
+  const preset = document.querySelector(`#mColors .swatch[data-color="${modalColor || ''}"]`);
+  const custom = document.querySelector('#mColors .custom');
+  document.querySelectorAll('#mColors .swatch').forEach((b) => b.classList.toggle('on', b === (preset || custom)));
+  // 견본에 없는 색이면 '직접 고르기' 칸의 말랑이가 그 색이 된다
+  if (!preset) custom.dataset.custom = modalColor;
+  $('mColorPick').value = (modalColor || T.pet).toLowerCase();
+  renderSwatches();
+  previewView.sv += 2;
+}
+
+// 색 견본마다 그 색 아기 말랑이를 그린다
+function renderSwatches() {
+  document.querySelectorAll('#mColors .swatch').forEach((b) => {
+    let cv = b.querySelector('canvas');
+    if (!cv) {
+      cv = document.createElement('canvas');
+      cv.width = 26; cv.height = 34;
+      b.append(cv);
+    }
+    const color = b.classList.contains('custom') ? b.dataset.custom || T.bg : b.dataset.color || null;
+    const c = cv.getContext('2d');
+    c.clearRect(0, 0, cv.width, cv.height);
+    const fake = { sprout: 'twin', color, form: null, hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
+    const v = { x: 13, y: 32, s: 0, face: 0, wob: 0, blink: 0, squint: 0, eatT: 0, playT: 0, held: false };
+    drawPet(c, fake, v, 'baby', 0, 32, 2);
+  });
+}
+
 function openModal(mode) {
   if (mode === 'adopt' && state.pets.length >= MAX_PETS) {
     return toast(`말랑이는 최대 ${MAX_PETS}마리까지 함께 살 수 있어요`);
@@ -1294,6 +1725,7 @@ function openModal(mode) {
     $('mTitle').textContent = state.pets.length ? '새 말랑이 입양하기' : '첫 말랑이를 데려와요';
     mName.value = suggestName();
     setModalSprout(pick(SPROUTS));
+    setModalColor(null);
     mOk.textContent = '입양하기';
     mFarewell.hidden = true;
   } else {
@@ -1302,6 +1734,7 @@ function openModal(mode) {
     $('mTitle').textContent = '말랑이 정보';
     mName.value = p.name;
     setModalSprout(p.sprout);
+    setModalColor(p.color);
     mOk.textContent = '저장';
     mFarewell.hidden = false;
   }
@@ -1319,7 +1752,7 @@ function closeModal() {
 function confirmModal() {
   const name = mName.value.trim() || suggestName();
   if (modalMode === 'adopt') {
-    const p = newPet(name, modalSprout);
+    const p = newPet(name, modalSprout, modalColor);
     state.pets.push(p);
     const v = viewOf(p);
     v.x = rand(W * 0.55, W - 220);
@@ -1328,7 +1761,7 @@ function confirmModal() {
     toast(`${name}의 알이 도착했어요!`);
   } else if (modalMode === 'edit') {
     const p = selected();
-    if (p) { p.name = name; p.sprout = modalSprout; }
+    if (p) { p.name = name; p.sprout = modalSprout; p.color = modalColor; }
   }
   closeModal();
   updateTrayIcon();
@@ -1355,7 +1788,7 @@ function farewell() {
 function drawPreview(t) {
   const c = previewCtx;
   c.clearRect(0, 0, 176, 128);
-  const fake = { sprout: modalSprout, hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
+  const fake = { sprout: modalSprout, color: modalColor, form: null, hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
   const v = previewView;
   v.sv += (-v.s * 260 - v.sv * 9) / 60;
   v.s += v.sv / 60;
@@ -1370,6 +1803,10 @@ $('mCancel').addEventListener('click', closeModal);
 mFarewell.addEventListener('click', farewell);
 $('mDice').addEventListener('click', () => { mName.value = suggestName(); });
 document.querySelectorAll('#mSprouts .sprout').forEach((b) => b.addEventListener('click', () => setModalSprout(b.dataset.sprout)));
+document.querySelectorAll('#mColors .swatch[data-color]').forEach((b) => {
+  b.addEventListener('click', () => setModalColor(b.dataset.color));
+});
+$('mColorPick').addEventListener('input', (e) => setModalColor(e.target.value.toUpperCase()));
 $('mPreview').addEventListener('click', () => { previewView.sv += 3.5; });
 document.addEventListener('keydown', (e) => {
   if (modal.hidden) return;
@@ -1382,6 +1819,18 @@ window.malang.onCommand((command) => {
   if (command === 'adopt') openModal('adopt');
   if (command === 'gather') gather();
   if (command.startsWith('theme:')) setTheme(command.slice(6));
+  if (command === 'home' && home.hidden) toggleHome();
+  if (command === 'mark:hidden') toggleMarkHidden();
+  if (command === 'mark:lock') toggleMarkLock();
+  if (command === 'mark:reset') resetMark();
+  if (command === 'friends') openFriends();
+  if (command === 'dnd') {
+    state.dnd = !state.dnd;
+    toast(state.dnd ? '방해 금지 모드: 전체화면 창이 앞에 있으면 숨어 있을게요' : '방해 금지 모드를 껐어요');
+    prefsChanged();
+  }
+  if (command === 'dnd:quiet') quiet = true;
+  if (command === 'dnd:loud') quiet = false;
 });
 
 // ===================== 알림 / 이벤트 =====================
@@ -1394,16 +1843,21 @@ function handleEvents() {
       faint: `${josa(pet.name, '이', '가')} 지쳐서 잠들었어요`,
       wake: `${josa(pet.name, '이', '가')} 푹 자고 일어났어요`,
       sick: `${josa(pet.name, '이', '가')} 아파요! 약을 먹여 주세요`,
+      morning: `${josa(pet.name, '이', '가')} 기지개를 켜며 일어났어요`,
+      nightSleep: `밤이 깊어 ${josa(pet.name, '이', '가')} 잠들었어요`,
     }[type];
     toast(msg);
     if (type === 'poop' && v) v.sv += 2;
+    if (type === 'morning' && v) { v.stretchT = 1.2; say(v, '좋은 아침!', 2.5); }
     if (type === 'sick' || type === 'faint') notify(msg);
   }
 }
 
-// 말랑이가 화면에 보이면 말풍선으로 충분하니, 숨겨 뒀을 때만 윈도우 알림을 띄운다
+// 말랑이가 화면에 보이면 말풍선으로 충분하니, 숨겨 뒀을 때만 윈도우 알림을 띄운다.
+// 방해 금지 모드로 숨은 동안(게임·영상 중)은 알림도 쉿.
+let quiet = false;
 function notify(body) {
-  if (!document.hidden) return;
+  if (!document.hidden || quiet) return;
   try { new Notification('말랑이 키우기', { body }); } catch { /* 알림을 못 띄워도 게임은 계속된다 */ }
 }
 
@@ -1422,11 +1876,321 @@ function checkNeeds(p) {
   }
 }
 
+// ===================== 친구 · 쪽지 (P2P) =====================
+// 친구 코드로 서로 연결하면, 말랑이가 쪽지를 들고 친구 바탕화면에 놀러 간다.
+// PeerJS 공개 서버는 둘을 이어 줄 때만 쓰고 쪽지는 둘 사이에 바로 오간다.
+// 그래서 둘 다 켜져 있을 때만 전해진다.
+const PEER_PREFIX = 'malangpet-';
+const MAX_FRIENDS = 20;
+const friendsBox = $('friends');
+const conns = new Map();     // 친구 코드 → 인사까지 마친 연결
+const pending = new Map();   // 친구 코드 → 거는 중인 연결
+const visitors = [];         // 쪽지를 들고 놀러 온 친구네 말랑이
+const noteLog = [];          // 이번에 주고받은 쪽지
+let peer = null;
+let netState = 'off';
+let fTarget = null;          // 쪽지 받을 친구 코드
+let friendsPos = null;
+let hoverVisitor = null;
+let removeArmed = null;
+
+const fmtCode = (c) => `${c.slice(0, 4)}-${c.slice(4)}`;
+const parseCode = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const cleanText = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+const findFriend = (code) => state.friends.find((f) => f.code === code);
+const friendName = (f) => f.nick || fmtCode(f.code);
+const myNick = () => state.nick || '친구';
+
+function setNet(s) {
+  netState = s;
+  refreshFriends();
+}
+
+function startNet() {
+  if (typeof Peer === 'undefined') return setNet('off');
+  setNet('connecting');
+  const pr = new Peer(PEER_PREFIX + state.myCode.toLowerCase(), { debug: 0 });
+  peer = pr;
+  pr.on('open', () => { setNet('on'); connectFriends(); });
+  pr.on('connection', (conn) => setupConn(conn));
+  pr.on('disconnected', () => {
+    if (peer !== pr || pr.destroyed) return;
+    setNet('connecting');
+    setTimeout(() => { if (peer === pr && !pr.destroyed && pr.disconnected) pr.reconnect(); }, 5000);
+  });
+  pr.on('error', (err) => {
+    if (err.type === 'peer-unavailable') return;   // 친구가 꺼져 있을 뿐
+    if (peer !== pr) return;
+    // 인터넷이 끊겼거나, 방금 껐다 켜서 서버가 예전 연결을 아직 쥐고 있을 때 — 잠시 뒤 다시
+    peer = null;
+    pr.destroy();
+    setNet('off');
+    setTimeout(startNet, 15000);
+  });
+}
+
+function connectFriends() {
+  if (!peer || !peer.open) return;
+  for (const f of state.friends) {
+    if (conns.has(f.code) || pending.has(f.code)) continue;
+    const conn = peer.connect(PEER_PREFIX + f.code.toLowerCase(), { serialization: 'json', reliable: true });
+    pending.set(f.code, conn);
+    // 친구가 꺼져 있으면 연결이 열리지 않는다 — 정리하고 나중에 다시
+    setTimeout(() => {
+      if (pending.get(f.code) === conn) pending.delete(f.code);
+      if (!conn.open) conn.close();
+    }, 15000);
+    setupConn(conn);
+  }
+}
+
+function setupConn(conn) {
+  conn.on('open', () => conn.send({ t: 'hi', code: state.myCode, nick: myNick() }));
+  conn.on('data', (d) => onData(conn, d));
+  conn.on('close', () => dropConn(conn));
+  conn.on('error', () => dropConn(conn));
+}
+
+function dropConn(conn) {
+  for (const [code, c] of conns) if (c === conn) conns.delete(code);
+  for (const [code, c] of pending) if (c === conn) pending.delete(code);
+  refreshFriends();
+}
+
+function onData(conn, d) {
+  if (!d || typeof d !== 'object') return;
+  if (d.t === 'hi') {
+    const code = parseCode(d.code);
+    // 코드가 실제 연결 주소와 같은지 확인해서 남의 코드를 흉내 내지 못하게 한다
+    if (code.length !== 8 || code === state.myCode || conn.peer !== PEER_PREFIX + code.toLowerCase()) return conn.close();
+    if (state.blocked.includes(code)) return conn.close();
+    let f = findFriend(code);
+    if (!f) {
+      if (state.friends.length >= MAX_FRIENDS) return conn.close();
+      f = { code, nick: '' };
+      state.friends.push(f);
+      toast(`${cleanText(d.nick, 10) || fmtCode(code)}님과 친구가 됐어요`);
+    }
+    f.nick = cleanText(d.nick, 10) || f.nick;
+    pending.delete(code);
+    conns.set(code, conn);
+    persist();
+    refreshFriends();
+    return;
+  }
+  const entry = [...conns].find(([, c]) => c === conn);
+  if (!entry) return;   // 인사 전에 온 건 무시
+  if (d.t === 'msg') receiveNote(findFriend(entry[0]), d);
+}
+
+function receiveNote(f, d) {
+  const text = cleanText(d.text, 40);
+  if (!f || !text) return;
+  const nick = friendName(f);
+  noteLog.push({ dir: 'in', nick, text });
+  if (noteLog.length > 30) noteLog.shift();
+  spawnVisitor(f, nick, text, d.pet && typeof d.pet === 'object' ? d.pet : {});
+  toast(`${nick}의 말랑이가 쪽지를 가져왔어요!`);
+  notify(`${nick}: ${text}`);
+  refreshFriends();
+}
+
+function sendNote() {
+  const input = $('fMsg');
+  const text = cleanText(input.value, 40);
+  if (!text) return;
+  if (!fTarget) return toast('쪽지를 받을 친구를 골라 주세요');
+  const conn = conns.get(fTarget);
+  if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요. 둘 다 켜져 있어야 전해져요');
+  // 깨어 있는 말랑이가 쪽지를 들고 간다
+  const p = [selected(), ...state.pets].find((x) => x && stageOf(x) !== 'egg' && !x.sleeping)
+    || state.pets.find((x) => stageOf(x) !== 'egg');
+  conn.send({
+    t: 'msg', text,
+    pet: p ? { name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p) } : null,
+  });
+  noteLog.push({ dir: 'out', nick: friendName(findFriend(fTarget)), text });
+  if (noteLog.length > 30) noteLog.shift();
+  input.value = '';
+  if (p) {
+    const v = viewOf(p);
+    if (!p.sleeping) { v.vy = -520; v.sv -= 3; }
+    setEmote(v, 'letter', 1.5);
+    toast(`${josa(p.name, '이', '가')} 쪽지를 들고 출발했어요!`);
+  } else {
+    toast('쪽지를 보냈어요');
+  }
+  refreshFriends();
+}
+
+function spawnVisitor(f, nick, text, info) {
+  const stage = ['baby', 'child', 'adult'].includes(info.stage) ? info.stage : 'child';
+  const pet = {
+    id: 'visitor-' + Math.random().toString(36).slice(2), visitor: true,
+    name: cleanText(info.name, 10) || '말랑이',
+    sprout: SPROUTS.includes(info.sprout) ? info.sprout : 'twin',
+    color: /^#[0-9A-Fa-f]{6}$/.test(String(info.color || '')) ? info.color : null,
+    form: stage === 'adult' && Object.hasOwn(FORMS, String(info.form || '')) ? info.form : null,
+    born: Date.now() - EGG_MS - { baby: 2, child: 30, adult: 80 }[stage] * HOUR,
+    hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [],
+  };
+  // 하늘에서 톡 떨어져서 놀러 온다
+  const v = viewOf(pet);
+  v.x = rand(W * 0.25, W * 0.75);
+  v.y = STAGES[stage].r * PX * 2;
+  v.bubbleT = Infinity;
+  setEmote(v, 'letter', 2.5);
+  emit(v.x, v.y, 'sparkle', { n: 5, spread: 100, up: 160 });
+  visitors.push({ pet, v, code: f.code, nick, text, t: 60 });
+  while (visitors.length > 3) removeVisitor(visitors[0]);
+}
+
+function removeVisitor(vis) {
+  const i = visitors.indexOf(vis);
+  if (i >= 0) visitors.splice(i, 1);
+  views.delete(vis.pet.id);
+  if (vis.v.geo) emit(vis.v.geo.cx, vis.v.geo.cy, 'sparkle', { n: 5, spread: 80, up: 140 });
+}
+
+function updateVisitors(dt) {
+  for (const vis of [...visitors]) {
+    updateView(vis.pet, vis.v, dt);
+    if ((vis.t -= dt) <= 0) removeVisitor(vis);
+  }
+}
+
+function visitorAt(pt) {
+  for (const vis of visitors) {
+    const g = vis.v.geo;
+    if (!g) continue;
+    const dx = (pt.x - g.cx) / (g.rx + 6), dy = (pt.y - g.cy) / (g.ry + 6);
+    if (dx * dx + dy * dy <= 1) return vis;
+  }
+  return null;
+}
+
+// 놀러 온 말랑이를 누르면 인사하고 돌아가고, 답장 쓰기 창이 열린다
+function visitorClicked(vis) {
+  vis.v.sv += 3.5;
+  vis.v.squint = 0.5;
+  setEmote(vis.v, 'heart', 1.5);
+  vis.t = Math.min(vis.t, 1.6);
+  fTarget = vis.code;
+  openFriends();
+  $('fMsg').focus();
+}
+
+function openFriends() {
+  closeCard();
+  friendsBox.hidden = false;
+  $('fNick').value = state.nick;
+  refreshFriends();
+  placeFriends();
+}
+
+function placeFriends() {
+  if (friendsBox.hidden) return;
+  const w = friendsBox.offsetWidth, h = friendsBox.offsetHeight;
+  const left = friendsPos ? friendsPos.x : W - w - 330;
+  const top = friendsPos ? friendsPos.y : H - h - 60;
+  friendsBox.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
+  friendsBox.style.top = Math.round(clamp(top, 10, H - h - 10)) + 'px';
+}
+
+function refreshFriends() {
+  if (friendsBox.hidden) return;
+  $('netState').textContent = { on: '연결됨', connecting: '연결 중..', off: '오프라인' }[netState];
+  $('myCode').textContent = fmtCode(state.myCode);
+  const list = $('fList');
+  if (!state.friends.length) {
+    list.textContent = '아직 친구가 없어요. 서로 코드를 추가해 보세요';
+  } else {
+    list.replaceChildren(...state.friends.map((f) => {
+      const online = conns.has(f.code);
+      const row = document.createElement('div');
+      row.className = 'friend' + (f.code === fTarget ? ' on' : '');
+      const dot = document.createElement('i');
+      dot.className = 'dot' + (online ? ' online' : '');
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = friendName(f);
+      const sub = document.createElement('span');
+      sub.className = 'sub';
+      sub.textContent = online ? '접속 중' : '꺼져 있음';
+      const del = document.createElement('button');
+      del.className = 'link warn';
+      del.textContent = removeArmed === f.code ? '정말?' : '삭제';
+      del.addEventListener('click', (e) => { e.stopPropagation(); removeFriend(f.code); });
+      row.append(dot, who, sub, del);
+      row.addEventListener('click', () => { fTarget = f.code; removeArmed = null; refreshFriends(); $('fMsg').focus(); });
+      return row;
+    }));
+  }
+  const f = fTarget && findFriend(fTarget);
+  $('fTo').textContent = f ? `${friendName(f)}에게 쪽지` : '받을 친구를 골라 주세요';
+  $('fLog').replaceChildren(...noteLog.slice(-5).map((n) => {
+    const el = document.createElement('div');
+    el.className = n.dir;
+    el.textContent = `${n.dir === 'in' ? '←' : '→'} ${n.nick}: ${n.text}`;
+    return el;
+  }));
+}
+
+function addFriend() {
+  const code = parseCode($('fCode').value);
+  if (code.length !== 8) return toast('친구 코드는 8자리예요 (예: ABCD-1234)');
+  if (code === state.myCode) return toast('내 코드예요! 친구 코드를 넣어 주세요');
+  state.blocked = state.blocked.filter((c) => c !== code);
+  if (!findFriend(code)) {
+    if (state.friends.length >= MAX_FRIENDS) return toast(`친구는 ${MAX_FRIENDS}명까지예요`);
+    state.friends.push({ code, nick: '' });
+  }
+  fTarget = code;
+  $('fCode').value = '';
+  persist();
+  refreshFriends();
+  connectFriends();
+  toast('친구를 추가했어요. 친구도 켜져 있으면 바로 연결돼요');
+}
+
+function removeFriend(code) {
+  if (removeArmed !== code) { removeArmed = code; return refreshFriends(); }
+  removeArmed = null;
+  state.friends = state.friends.filter((f) => f.code !== code);
+  // 지운 친구가 다시 연결해 와도 받지 않는다 (코드를 다시 추가하면 풀린다)
+  if (!state.blocked.includes(code)) state.blocked.push(code);
+  const c = conns.get(code);
+  if (c) c.close();
+  conns.delete(code);
+  if (fTarget === code) fTarget = null;
+  persist();
+  refreshFriends();
+}
+
+dragBy($('friendsBar'), friendsBox, (pos) => { friendsPos = pos; });
+$('friendsClose').addEventListener('click', () => { friendsBox.hidden = true; });
+$('fAdd').addEventListener('click', addFriend);
+$('fCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') addFriend(); });
+$('fSend').addEventListener('click', sendNote);
+$('fMsg').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendNote(); });
+$('fNick').addEventListener('change', (e) => {
+  state.nick = cleanText(e.target.value, 10);
+  e.target.value = state.nick;
+  persist();
+  for (const c of conns.values()) if (c.open) c.send({ t: 'hi', code: state.myCode, nick: myNick() });
+});
+$('copyCode').addEventListener('click', () => {
+  navigator.clipboard.writeText(fmtCode(state.myCode))
+    .then(() => toast('친구 코드를 복사했어요'))
+    .catch(() => toast(`내 코드: ${fmtCode(state.myCode)}`));
+});
+
 // ===================== 시작 =====================
 resize();
 window.addEventListener('resize', resize);
 applyTheme();
 window.malang.themeChanged(state.theme);
+prefsChanged();
 
 const awayMs = Date.now() - state.lastSim;
 advance(Date.now());
@@ -1449,5 +2213,8 @@ setInterval(() => {
 }, 1000);
 setInterval(() => { refreshCard(); refreshHome(); }, 250);
 window.addEventListener('beforeunload', persist);
+
+startNet();
+setInterval(connectFriends, 30000);
 
 requestAnimationFrame(frame);

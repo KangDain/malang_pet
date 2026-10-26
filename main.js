@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 
 let win = null;
 let tray = null;
@@ -43,6 +44,87 @@ ipcMain.on('theme-changed', (_e, value) => {
   if (tray) tray.setContextMenu(buildMenu());
 });
 
+// 렌더러가 가진 설정 (표지 숨김/고정, 방해 금지) — 트레이 메뉴 체크 표시용
+let prefs = { hidden: false, locked: false, dnd: true };
+ipcMain.on('prefs-changed', (_e, value) => {
+  prefs = value;
+  if (prefs.dnd) startFullscreenWatch();
+  else stopFullscreenWatch();
+  if (tray) tray.setContextMenu(buildMenu());
+});
+
+// ===================== 방해 금지 모드 =====================
+// 게임·영상 같은 전체화면 창이 앞에 있으면 말랑이를 잠깐 숨긴다.
+// 네이티브 모듈 없이 PowerShell로 맨 앞 창 크기를 1.5초마다 확인한다.
+const FULLSCREEN_SCRIPT = `
+Add-Type @"
+using System; using System.Runtime.InteropServices; using System.Text;
+public class FG {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, uint f);
+  [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
+  public struct RECT { public int L, T, R, B; }
+  [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
+}
+"@
+while ($true) {
+  $full = 0
+  $h = [FG]::GetForegroundWindow()
+  if ($h -ne [IntPtr]::Zero) {
+    $owner = 0; [void][FG]::GetWindowThreadProcessId($h, [ref]$owner)
+    $sb = New-Object Text.StringBuilder 256; [void][FG]::GetClassName($h, $sb, 256); $cls = $sb.ToString()
+    if ($owner -ne SELF_PID -and $cls -ne 'Progman' -and $cls -ne 'WorkerW' -and $cls -ne 'Shell_TrayWnd') {
+      $r = New-Object FG+RECT; [void][FG]::GetWindowRect($h, [ref]$r)
+      $mi = New-Object FG+MONITORINFO; $mi.cbSize = 40
+      [void][FG]::GetMonitorInfo([FG]::MonitorFromWindow($h, 2), [ref]$mi)
+      $m = $mi.rcMonitor
+      # 말랑이가 사는 주 모니터를 꽉 채운 창만 전체화면으로 본다
+      if (($mi.dwFlags -band 1) -and $r.L -le $m.L -and $r.T -le $m.T -and $r.R -ge $m.R -and $r.B -ge $m.B) { $full = 1 }
+    }
+  }
+  [Console]::Out.WriteLine($full); [Console]::Out.Flush()
+  Start-Sleep -Milliseconds 1500
+}
+`;
+
+let watcher = null;
+let hiddenByDnd = false;
+
+function startFullscreenWatch() {
+  if (watcher || process.platform !== 'win32') return;
+  const script = FULLSCREEN_SCRIPT.replace('SELF_PID', String(process.pid));
+  watcher = spawn('powershell.exe', [
+    '-NoProfile', '-NonInteractive',
+    '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+  ], { windowsHide: true });
+  watcher.stdout.on('data', (chunk) => {
+    const lines = chunk.toString().trim().split(/\s+/);
+    setFullscreen(lines[lines.length - 1] === '1');
+  });
+  watcher.on('exit', () => { watcher = null; });
+}
+
+function stopFullscreenWatch() {
+  if (watcher) { watcher.kill(); watcher = null; }
+  setFullscreen(false);
+}
+
+function setFullscreen(full) {
+  if (!win) return;
+  if (full && !hiddenByDnd && win.isVisible()) {
+    hiddenByDnd = true;
+    win.hide();
+    win.webContents.send('command', 'dnd:quiet');
+  } else if (!full && hiddenByDnd) {
+    hiddenByDnd = false;
+    win.showInactive();   // 하던 일의 포커스를 뺏지 않는다
+    win.webContents.send('command', 'dnd:loud');
+  }
+}
+
 function fitToWorkArea() {
   if (win) win.setBounds(screen.getPrimaryDisplay().workArea);
 }
@@ -72,6 +154,15 @@ function buildMenu() {
   return Menu.buildFromTemplate([
     { label: '새 말랑이 입양하기', click: () => send('adopt') },
     { label: '말랑이 모두 부르기', click: () => send('gather') },
+    { label: '말랑이네 열기', click: () => send('home') },
+    { label: '친구 · 쪽지', click: () => send('friends') },
+    {
+      label: '말랑이네 표지', submenu: [
+        { label: '표지 보이기', type: 'checkbox', checked: !prefs.hidden, click: () => send('mark:hidden') },
+        { label: '위치 고정', type: 'checkbox', checked: prefs.locked, click: () => send('mark:lock') },
+        { label: '처음 위치로', click: () => send('mark:reset') },
+      ],
+    },
     { type: 'separator' },
     {
       label: '테마', submenu: [
@@ -83,6 +174,10 @@ function buildMenu() {
     {
       label: '항상 위에 표시', type: 'checkbox', checked: alwaysOnTop,
       click: (item) => { alwaysOnTop = item.checked; win.setAlwaysOnTop(alwaysOnTop); },
+    },
+    {
+      label: '방해 금지 모드 (전체화면일 때 숨기기)', type: 'checkbox', checked: prefs.dnd,
+      click: () => win && win.webContents.send('command', 'dnd'),
     },
     { label: '숨기기 / 보이기', click: toggleVisible },
     { type: 'separator' },
@@ -98,6 +193,7 @@ function createTray() {
 }
 
 function toggleVisible() {
+  hiddenByDnd = false;
   if (win.isVisible()) win.hide();
   else win.show();
 }
@@ -144,4 +240,5 @@ if (!app.requestSingleInstanceLock()) {
     createTray();
   });
   app.on('window-all-closed', () => app.quit());
+  app.on('before-quit', () => { if (watcher) watcher.kill(); });
 }

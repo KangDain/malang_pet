@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://0.peerjs.com wss://0.peerjs.com">
   <title>말랑이 키우기</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -52,6 +52,51 @@
       <button class="btn" id="hGather">모두 부르기</button>
       <button class="btn" id="hTheme"></button>
     </div>
+    <div class="home-actions">
+      <button class="btn" id="hLock"></button>
+      <button class="btn" id="hHide">표지 숨기기</button>
+    </div>
+    <div class="home-actions">
+      <button class="btn" id="hFriends"><canvas class="ico" data-icon="letter"></canvas><span>친구 · 쪽지</span></button>
+    </div>
+  </div>
+
+  <!-- 친구에게 말랑이로 쪽지 보내기 (둘 다 켜져 있을 때 P2P로 전해진다) -->
+  <div id="friends" class="ui box" hidden>
+    <div id="friendsBar" class="titlebar">
+      <canvas class="ico" data-icon="letter"></canvas>
+      <span class="name">친구</span>
+      <span id="netState" class="sub"></span>
+      <span class="spacer"></span>
+      <button id="friendsClose" class="link">닫기</button>
+    </div>
+    <div class="field first">
+      <span>내 친구 코드 — 친구에게 알려 주세요</span>
+      <div class="row">
+        <span id="myCode" class="code"></span>
+        <button id="copyCode" class="btn small">복사</button>
+      </div>
+    </div>
+    <label class="field">
+      <span>내 이름</span>
+      <input id="fNick" class="input" maxlength="10" autocomplete="off">
+    </label>
+    <div class="field">
+      <span>친구 추가</span>
+      <div class="row">
+        <input id="fCode" class="input" maxlength="9" placeholder="ABCD-1234" autocomplete="off">
+        <button id="fAdd" class="btn small">추가</button>
+      </div>
+    </div>
+    <div id="fList"></div>
+    <div class="field">
+      <span id="fTo">받을 친구를 골라 주세요</span>
+      <div class="row">
+        <input id="fMsg" class="input" maxlength="40" placeholder="말랑이가 전해 줄 쪽지" autocomplete="off">
+        <button id="fSend" class="btn small primary">보내기</button>
+      </div>
+    </div>
+    <div id="fLog"></div>
   </div>
 
   <div id="modal" hidden>
@@ -73,6 +118,19 @@
           <button class="btn sprout" data-sprout="flower"><canvas class="ico" data-icon="flower"></canvas><span>꽃봉오리</span></button>
         </div>
       </div>
+      <div class="field">
+        <span>색깔</span>
+        <div class="row" id="mColors">
+          <button class="swatch" data-color="" title="기본"></button>
+          <button class="swatch" data-color="#F2A7B8" title="딸기"></button>
+          <button class="swatch" data-color="#F4A96A" title="귤"></button>
+          <button class="swatch" data-color="#F3D36B" title="바나나"></button>
+          <button class="swatch" data-color="#8FD9C0" title="민트"></button>
+          <button class="swatch" data-color="#8EC5E8" title="소다"></button>
+          <button class="swatch" data-color="#B9A3E3" title="포도"></button>
+          <label class="swatch custom" title="직접 고르기"><input type="color" id="mColorPick"></label>
+        </div>
+      </div>
       <div class="row buttons">
         <button id="mFarewell" class="link warn">작별하기</button>
         <span class="spacer"></span>
@@ -82,6 +140,7 @@
     </div>
   </div>
 
+  <script src="vendor/peerjs.min.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
