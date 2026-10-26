@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://0.peerjs.com wss://0.peerjs.com">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://0.peerjs.com wss://0.peerjs.com https://api.open-meteo.com https://geocoding-api.open-meteo.com">
   <title>말랑이 키우기</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -47,6 +47,14 @@
       <button id="homeClose" class="link">닫기</button>
     </div>
     <canvas id="room" width="276" height="150"></canvas>
+    <div class="weather">
+      <span id="wLine"></span>
+      <button id="wPlace" class="link">지역</button>
+    </div>
+    <div id="wEdit" class="row" hidden>
+      <input id="wCity" class="input" maxlength="30" placeholder="도시 이름 (예: 부산, Tokyo)" autocomplete="off">
+      <button id="wOk" class="btn small">확인</button>
+    </div>
     <div class="home-actions">
       <button class="btn" id="hAdopt">입양</button>
       <button class="btn" id="hGather">모두 부르기</button>
@@ -55,9 +63,11 @@
     <div class="home-actions">
       <button class="btn" id="hLock"></button>
       <button class="btn" id="hHide">표지 숨기기</button>
+      <button class="btn warn" id="hQuit" title="말랑이 키우기를 꺼요 (바탕화면 바로가기로 다시 켤 수 있어요)">끄기</button>
     </div>
     <div class="home-actions">
       <button class="btn" id="hFriends"><canvas class="ico" data-icon="letter"></canvas><span>친구 · 쪽지</span></button>
+      <button class="btn" id="hFocus"><canvas class="ico" data-icon="focus"></canvas><span id="hFocusLabel">집중 모드</span></button>
     </div>
   </div>
 
@@ -90,13 +100,23 @@
     </div>
     <div id="fList"></div>
     <div class="field">
-      <span id="fTo">받을 친구를 골라 주세요</span>
+      <div class="row">
+        <span id="fTo" class="spacer">대화할 친구를 골라 주세요</span>
+        <button id="fShake" class="btn small" title="친구 바탕화면의 말랑이를 흔들어요">흔들기</button>
+      </div>
+      <div id="fLog"></div>
+      <div id="fAttach" class="row" hidden>
+        <img id="fAttachImg" alt="보낼 사진">
+        <span class="spacer">사진을 같이 보내요</span>
+        <button id="fAttachDel" class="link warn">빼기</button>
+      </div>
       <div class="row">
         <input id="fMsg" class="input" maxlength="40" placeholder="말랑이가 전해 줄 쪽지" autocomplete="off">
+        <button id="fPhoto" class="btn small" title="사진 보내기 (붙여넣기도 돼요)"><canvas class="ico" data-icon="photo"></canvas></button>
+        <input type="file" id="fFile" accept="image/*" hidden>
         <button id="fSend" class="btn small primary">보내기</button>
       </div>
     </div>
-    <div id="fLog"></div>
   </div>
 
   <div id="modal" hidden>

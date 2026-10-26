@@ -102,11 +102,19 @@ const SPR = {
   dots:     ['s s s'],
   letter:   ['bbbbbbb', 'bsbbbsb', 'bbsbsbb', 'bbbsbbb', 'bbbbbbb'],
   crown:    ['h h h', 'hhhhh', 'hwhwh'],
+  broom:    ['      tt', '     tt ', '    tt  ', '   tt   ', '  BBB   ', ' hhhhh  ', ' hhhhh  ', 'hhhhhhh ', 'h h h h '],
+  puff:     [' s ', 'sss', ' s '],
+  fly:      ['b b', ' o '],
+  stink:    ['l ', ' l', 'l ', ' l'],
+  focus:    ['    ww', '   hww', '  hhh ', ' hhh  ', 'Bhh   ', 'BB    '],
+  photo:    ['  sss  ', 'sssssss', 'ssscsss', 'sscbcss', 'ssscsss', 'sssssss'],
   // 머리 위 새싹 (맨 아랫줄이 머리에 붙는다)
   twin:     ['ll   ll', 'lll lll', ' lllll ', '   l   '],
   single:   ['   ll', '  lll', ' lll ', '  l  '],
   flower:   [' w ', 'whw', ' w ', ' ll', ' l '],
 };
+// 빗자루는 쓸 때 좌우로 기울어진다
+SPR.broomL = SPR.broom.map((row) => [...row].reverse().join(''));
 const FOODS = ['onigiri', 'apple', 'cookie', 'pudding'];
 
 // ===================== 유틸 =====================
@@ -145,6 +153,8 @@ function fmtDuration(ms) {
 }
 
 // ===================== 저장 데이터 =====================
+const DEFAULT_LOC = { name: '서울', lat: 37.5665, lon: 126.978 };   // 창밖 날씨를 볼 지역
+
 function loadState() {
   const s = window.malang.load();
   if (s && Array.isArray(s.pets)) {
@@ -163,13 +173,15 @@ function loadState() {
     if (!Array.isArray(s.blocked)) s.blocked = [];
     if (!s.myCode) s.myCode = makeCode();
     if (typeof s.nick !== 'string') s.nick = '';
+    s.focus = !!s.focus;
+    if (!s.weatherLoc || !Number.isFinite(s.weatherLoc.lat)) s.weatherLoc = DEFAULT_LOC;
     return s;
   }
   // mark: 말랑이네 표지 위치 (화면 비율, null이면 오른쪽 아래 기본 자리)
   return {
     version: 2, lastSim: Date.now(), selectedId: null, theme: 'system', pets: [],
-    mark: null, markLocked: false, markHidden: false, dnd: true,
-    myCode: makeCode(), nick: '', friends: [], blocked: [],
+    mark: null, markLocked: false, markHidden: false, dnd: true, focus: false,
+    myCode: makeCode(), nick: '', friends: [], blocked: [], weatherLoc: DEFAULT_LOC,
   };
 }
 const state = loadState();
@@ -316,9 +328,18 @@ function drawEgg(c, p, v, r, h, t, ox, oy, px) {
   v.geo = { cx: ox, cy: oy - ry * px, rx: rx * px, ry: ry * px, top: oy - (2 * ry + 1) * px };
 }
 
+// 꼬질 단계 0~3 (청결 50 / 30 / 15 아래)
+const DIRT_SPOTS = [[-0.55, 0.35], [0.4, 0.6], [0.15, 0.22], [-0.25, 0.72], [0.6, 0.32], [-0.75, 0.62]];
+function dirtLevel(p, st) {
+  if (p.visitor || st === 'egg') return 0;
+  return p.clean < 15 ? 3 : p.clean < 30 ? 2 : p.clean < 50 ? 1 : 0;
+}
+
 // 말랑이 한 마리를 칸 단위로 래스터라이즈해서 그린다
 function drawPet(c, p, v, st, t, groundY, px = PX) {
-  const ox = snap(v.x, px), oy = snap(v.y, px);
+  // 친구가 흔들면 좌우로 덜덜
+  const jit = v.shakeT > 0 ? (Math.floor(t * 30) % 2 ? px : -px) : 0;
+  const ox = snap(v.x, px) + jit, oy = snap(v.y, px);
   let { r, h } = STAGES[st];
   const form = formOf(p, st);
   if (form) { r += form.dr; h += form.dh; }
@@ -331,7 +352,8 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
   const hw = Math.max(3, Math.round(r * (1 + sq * 0.9)));   // 절반 너비
   const hh = Math.max(3, Math.round(h * (1 - sq)));         // 높이
 
-  const body = p.sick ? T.text_sub : p.color || T.pet;
+  let body = p.sick ? T.text_sub : p.color || T.pet;
+  if (!p.sick && dirtLevel(p, st) >= 3) body = darken(body, 0.88);   // 아주 꼬질하면 몸빛이 탁해진다
   const shade = p.sick ? T.border : p.color ? darken(p.color, 0.8) : T.leaf;
   // 몸 색을 바꾼 말랑이는 새싹도 같은 계열 색으로
   const pal = p.color && !p.sick ? { ...T, leaf: darken(p.color, 0.68) } : T;
@@ -355,6 +377,14 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
   shine(b, 2 - hh);
   if (form === FORMS.shiny) { shine(-b - 1, 3 - hh); shine(-b, 4 - hh); shine(b + 1, 4 - hh); }
   if (form === FORMS.royal) stamp(cells, SPR.crown, 0, -hh, pal);
+  // 안 씻기면 꼬질꼬질: 몸에 얼룩이 하나둘 생긴다
+  const spots = [0, 2, 4, 6][dirtLevel(p, st)];
+  const mud = darken(body, 0.62);
+  for (const [fx, fy] of DIRT_SPOTS.slice(0, spots)) {
+    const x = Math.round(fx * hw), y = Math.round(fy * hh) - hh;
+    if (cells.has(x, y)) cells.set(x, y, mud);
+    if (cells.has(x + 1, y)) cells.set(x + 1, y, mud);
+  }
 
   // 머리 위에 둥실 떠 있는 새싹
   const bob = v.held ? 0 : Math.sin(t * 3 + v.wob) > 0 ? 0 : 1;
@@ -421,10 +451,32 @@ function drawCloud(c, cx, top, icon, t) {
 }
 
 // 원하는 건 네모 말풍선으로 말한다
-function drawSpeech(c, text, cx, top) {
-  const px = 2;
+// 말풍선 폭을 넘으면 여러 줄로 (띄어쓰기에서 먼저 끊고, 긴 단어는 글자 단위로)
+const SPEECH_MAX_W = 132;
+function wrapText(c, text, maxW) {
+  const lines = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    const tryLine = line ? line + ' ' + word : word;
+    if (c.measureText(tryLine).width <= maxW) { line = tryLine; continue; }
+    if (line) lines.push(line);
+    line = '';
+    for (const ch of word) {
+      if (c.measureText(line + ch).width > maxW && line) { lines.push(line); line = ''; }
+      line += ch;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [''];
+}
+
+function drawSpeech(c, text, cx, top, icon = null) {
+  const px = 2, lineH = 14;
   c.font = '12px Galmuri11, "Malgun Gothic", sans-serif';
-  const wc = Math.ceil((Math.ceil(c.measureText(text).width) + 12) / px), hc = 9;
+  const iw = icon ? (SPR[icon][0].length + 3) * px : 0;   // 글자 앞 아이콘 자리
+  const lines = wrapText(c, text, SPEECH_MAX_W - iw);
+  const textW = Math.max(...lines.map((l) => Math.ceil(c.measureText(l).width)));
+  const wc = Math.ceil((textW + 12 + iw) / px), hc = 2 + Math.round((lines.length * lineH) / px);
   const ox = snap(clamp(cx - 12, 8, W - wc * px - 8), px), oy = snap(top - (hc + 4) * px, px);
   const tail = clamp(Math.round((cx - ox) / px), 2, wc - 3);
   const cells = new Cells();
@@ -436,9 +488,23 @@ function drawSpeech(c, text, cx, top) {
   }
   cells.set(tail, hc, T.bg); cells.set(tail + 1, hc, T.bg); cells.set(tail, hc + 1, T.bg);
   cells.outline(T.outline).draw(c, ox, oy, px);
+  if (icon) drawSprite(c, icon, ox + 6 + Math.floor(SPR[icon][0].length / 2) * px + px, oy + (hc - 2) * px, px);
   c.fillStyle = T.text;
   c.textAlign = 'left'; c.textBaseline = 'middle';
-  c.fillText(text, ox + 6, oy + (hc * px) / 2 + 1);
+  lines.forEach((l, i) => c.fillText(l, ox + 6 + iw, oy + px + lineH * i + lineH / 2 + 1));
+}
+
+// 사진은 머리 위에 폴라로이드처럼. 카드 윗변 y를 돌려준다 (말풍선은 그 위에)
+function drawPhotoCard(c, thumb, cx, top) {
+  const s = thumb.width, pad = 3;
+  const w = s + pad * 2, h = s + pad * 2 + 6;
+  const x = Math.round(clamp(cx - w / 2, 8, W - w - 8)), y = Math.round(top - h - 8);
+  c.fillStyle = T.outline;
+  c.fillRect(x - 2, y - 2, w + 4, h + 4);
+  c.fillStyle = '#FFFFFF';
+  c.fillRect(x, y, w, h);
+  c.drawImage(thumb, x + pad, y + pad);
+  return y + 4;
 }
 
 function drawLabel(c, text, cx, y) {
@@ -457,7 +523,7 @@ function drawLabel(c, text, cx, y) {
 
 // ===================== 말랑이네 (집 표지) =====================
 // 새싹이 든 네모 말풍선. 클릭하면 집 창이 열리고, 고정을 풀면 끌어서 옮길 수 있다.
-const homeMark = { geo: null, ox: 0, oy: 0 };
+const homeMark = { geo: null, ox: 0, oy: 0, shakeT: 0 };
 const MARK_W = 11 * 3, MARK_H = 12 * 3;   // 말풍선 + 꼬리 크기(px)
 
 function drawHomeMark(c, t) {
@@ -470,6 +536,8 @@ function drawHomeMark(c, t) {
   oy = snap(clamp(oy, 4, H - MARK_H - 4), px);
   homeMark.ox = ox; homeMark.oy = oy;
   if (!(mouse.down && mouse.down.mark && mouse.down.dragging)) oy -= bob;
+  // 집 안 말랑이를 친구가 흔들면 표지가 들썩
+  if (homeMark.shakeT > 0) ox += Math.floor(t * 30) % 2 ? px : -px;
   const cells = new Cells();
   for (let y = 0; y < hc; y++) {
     for (let x = 0; x < wc; x++) {
@@ -480,6 +548,10 @@ function drawHomeMark(c, t) {
   cells.set(2, hc, T.bg); cells.set(3, hc, T.bg); cells.set(2, hc + 1, T.bg);
   cells.outline(T.outline).draw(c, ox, oy, px);
   drawSprite(c, Math.sin(t * 1.2) > 0.6 ? 'single' : 'twin', ox + 5 * px, oy + 6 * px, px);
+  // 집 안에서 자는 말랑이가 있으면 쿨쿨
+  if (state.pets.some((p) => p.sleeping && views.has(p.id) && views.get(p.id).inside)) {
+    drawSprite(c, 'zee', ox + (wc + 1) * px, oy - (Math.sin(t * 2) > 0 ? 2 : 0), 2);
+  }
   homeMark.geo = { x: ox - px, y: oy - px, w: (wc + 2) * px, h: (hc + 4) * px };
 }
 
@@ -492,7 +564,9 @@ const overHomeMark = (pt) => {
 function prefsChanged() {
   $('hLock').textContent = state.markLocked ? '표지 고정 풀기' : '표지 고정';
   $('hHide').textContent = state.markHidden ? '표지 보이기' : '표지 숨기기';
-  window.malang.prefsChanged({ hidden: state.markHidden, locked: state.markLocked, dnd: state.dnd });
+  $('hFocusLabel').textContent = state.focus ? '집중 끝내기' : '집중 모드';
+  $('hFocus').classList.toggle('primary', state.focus);
+  window.malang.prefsChanged({ hidden: state.markHidden, locked: state.markLocked, dnd: state.dnd, focus: state.focus });
   persist();
 }
 
@@ -506,6 +580,26 @@ function toggleMarkHidden() {
   state.markHidden = !state.markHidden;
   if (state.markHidden) toast('표지를 숨겼어요. 트레이 메뉴에서 다시 열 수 있어요');
   prefsChanged();
+}
+
+// 집중 모드: 내 말랑이 머리 위에 연필 구름이 뜨고, 친구들에게도 '집중 중'으로 보인다
+function toggleFocus() {
+  state.focus = !state.focus;
+  toast(state.focus ? '집중 모드 시작! 말랑이들도 조용히 응원할게요' : '집중 모드 끝! 수고했어요');
+  const p = focusPet();
+  if (p) {
+    const v = viewOf(p);
+    v.sv += 2;
+    if (!state.focus) setEmote(v, 'sparkle', 1.5);
+  }
+  prefsChanged();
+  broadcastStatus();
+}
+
+// 집중 구름을 띄울 말랑이: 고른 말랑이가 깨어 있으면 그 아이, 아니면 깨어 있는 첫째
+function focusPet() {
+  const awake = (p) => p && stageOf(p) !== 'egg' && !p.sleeping && !viewOf(p).inside;
+  return [selected(), ...state.pets].find(awake) || null;
 }
 
 function resetMark() {
@@ -584,10 +678,9 @@ function simulate(p, dtH, now) {
   clampStats(p);
 }
 
+// 다들 집 침대에서 자니까, 다른 말랑이도 자고 있으면 같이 자는 셈
 function sleepBuddy(p) {
-  const v = views.get(p.id);
-  if (!v) return false;
-  return state.pets.some((o) => o !== p && o.sleeping && views.has(o.id) && Math.abs(views.get(o.id).x - v.x) < 70);
+  return state.pets.some((o) => o !== p && o.sleeping);
 }
 
 // 마지막 계산 시점부터 to까지 1분 단위로 진행 (앱이 꺼져 있던 시간도 포함)
@@ -627,6 +720,9 @@ function viewOf(p) {
       face: 1, wob: Math.random() * 10,
       stage: stageOf(p), lastPoke: 0, notified: {},
       geo: null,
+      // 자는 말랑이는 집 안 침대에 있다 (켤 때 이미 자고 있었으면 바로 집 안)
+      inside: !!p.sleeping && !p.visitor, goHome: false, enterT: 0,
+      shakeT: 0, photo: null,
     };
     views.set(p.id, v);
   }
@@ -660,6 +756,37 @@ function emit(x, y, sprite, { n = 1, spread = 60, up = 120, life = 1.2, gravity 
 
 const poopX = (f) => f * W;
 
+// ===================== 집으로 들어가 자기 =====================
+// 말랑이네 표지 아래가 현관. 표지를 숨겼으면 오른쪽 아래 구석.
+const doorX = () => (homeMark.geo ? clamp(homeMark.geo.x + homeMark.geo.w / 2, 40, W - 40) : W - 64);
+
+function goHome(p, v) {
+  v.goHome = true;
+  v.goal = doorX();
+  v.goalT = 25;
+  v.hopT = Math.min(v.hopT, 0.4);
+  v.meet = null; v.joinSleep = null;
+  v.emote = null; v.speech = null;
+}
+
+function enterHouse(p, v) {
+  v.goHome = false;
+  v.goalT = 0;
+  v.inside = true;
+  v.enterT = 0.5;   // 스르르 사라지는 시간
+  emit(v.x, v.y - 30, 'zee', { n: 2, spread: 30, up: 60, life: 1.2 });
+  if (state.selectedId === p.id && !card.hidden && home.hidden) closeCard();
+}
+
+function leaveHouse(p, v) {
+  v.inside = false;
+  v.goHome = false;
+  v.enterT = 0;
+  v.x = doorX(); v.y = floorY();
+  v.vx = rand(-120, 120); v.vy = -420; v.sv -= 3;
+  emit(v.x, v.y - 30, 'sparkle', { n: 4, spread: 80, up: 160 });
+}
+
 // ===================== 움직임 =====================
 function hop(p, v) {
   if (v.eatT > 0) { v.hopT = 0.5; return; }
@@ -674,11 +801,12 @@ function hop(p, v) {
       return;
     }
     const dir = Math.sign(dx);
+    const drowsy = p.sleeping ? 0.6 : 1;   // 졸면서 비척비척
     v.face = dir;
-    v.vx = dir * Math.min(Math.abs(dx) * 1.5, rand(260, 340));
-    v.vy = -rand(340, 440);
+    v.vx = dir * Math.min(Math.abs(dx) * 1.5, rand(260, 340) * drowsy);
+    v.vy = -rand(340, 440) * drowsy;
     v.sv -= 2;
-    v.hopT = rand(0.15, 0.3);
+    v.hopT = rand(0.15, 0.3) / drowsy;
     return;
   }
 
@@ -716,6 +844,7 @@ function hop(p, v) {
 
 // 목적지에 닿았을 때: 같이 자러 왔거나, 친구를 만나러 왔거나
 function arrive(p, v) {
+  if (v.goHome) return enterHouse(p, v);
   if (v.joinSleep) {
     const buddy = state.pets.find((x) => x.id === v.joinSleep);
     v.joinSleep = null;
@@ -723,7 +852,7 @@ function arrive(p, v) {
       p.sleeping = true;
       p.sleptAt = Date.now();
       v.emote = null; v.speech = null;
-      toast(`${p.name}도 ${buddy.name} 옆에서 잠들었어요`);
+      toast(`${p.name}도 ${buddy.name} 옆에서 같이 자러 들어가요`);
     }
   }
   if (v.meet) {
@@ -747,14 +876,13 @@ function greet(a, va, b, vb) {
 
 // 졸린 말랑이들이 옆으로 와서 같이 잔다
 function callSleepBuddies(p) {
-  const v = viewOf(p);
   let n = 0;
   for (const o of state.pets) {
     if (o === p || o.sleeping || o.sick || o.energy >= 60 || stageOf(o) === 'egg') continue;
     const ov = viewOf(o);
     if (ov.held) continue;
     n++;
-    ov.goal = clamp(v.x + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 50, 40, W - 40);
+    ov.goal = clamp(doorX() + (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 24, 40, W - 40);
     ov.goalT = 15;
     ov.joinSleep = p.id;
     ov.hopT = rand(0.2, 0.8);
@@ -767,7 +895,8 @@ function needSpeech(p) {
   if (p.sleeping) return null;
   if (p.sick) return '아파.. 약 줘';
   if (p.hunger < 30) return '배고파..';
-  if (p.poops.length >= 2 || p.clean < 30) return '씻겨 줘!';
+  if (p.poops.length >= 2) return '응가 치워 줘!';
+  if (p.clean < 30) return pick(['씻겨 줘!', '꼬질꼬질해..', '문질문질 해 줘']);
   if (p.energy < 25) return '졸려..';
   if (p.happy < 30) return '놀아 줘!';
   return null;
@@ -796,6 +925,21 @@ function updateView(p, v, dt) {
     toast(`${josa(p.name, '이', '가')} 태어났어요!`);
   }
   v.stage = st;
+
+  // 잠들면 집으로 걸어 들어가고, 깨면 현관에서 폴짝 나온다
+  if (!p.visitor && st !== 'egg') {
+    if (p.sleeping && !v.inside && !v.held) {
+      if (!v.goHome) goHome(p, v);
+      else if (v.goalT <= 0) enterHouse(p, v);
+    } else if (!p.sleeping && (v.inside || v.goHome)) {
+      if (v.inside) leaveHouse(p, v);
+      else { v.goHome = false; v.goalT = 0; }
+    }
+  }
+  if (v.enterT > 0) v.enterT = Math.max(0, v.enterT - dt);
+  if (v.shakeT > 0) v.shakeT = Math.max(0, v.shakeT - dt);
+  if (v.photo && (v.photo.t -= dt) <= 0) v.photo = null;
+  if (v.inside) { v.geo = null; return; }
 
   if (st === 'adult' && !p.form && !p.visitor) {
     p.form = decideForm(p);
@@ -828,7 +972,10 @@ function updateView(p, v, dt) {
     v.x += v.vx * dt;
     v.y += v.vy * dt;
     if (v.y >= fy) {
-      if (v.vy > 250) v.sv += v.vy * 0.006;   // 착지할 때 철퍼덕
+      if (v.vy > 250) {
+        v.sv += v.vy * 0.006;   // 착지할 때 철퍼덕
+        if (dirtLevel(p, st) >= 2) emit(v.x, fy - 4, 'puff', { n: 2, spread: 60, up: 40, life: 0.5, gravity: 60 });
+      }
       v.y = fy; v.vy = 0; v.grounded = true;
     } else {
       v.grounded = false;
@@ -839,7 +986,7 @@ function updateView(p, v, dt) {
 
     if (v.grounded) {
       v.vx *= Math.pow(0.004, dt);
-      if (st !== 'egg' && !p.sleeping) {
+      if (st !== 'egg' && (!p.sleeping || v.goHome)) {
         v.hopT -= dt;
         if (v.hopT <= 0) hop(p, v);
       }
@@ -868,10 +1015,11 @@ function updateView(p, v, dt) {
         v.bubbleT = rand(7, 11);
       } else {
         v.bubbleT = rand(6, 12);
-        // 밤엔 하품, 아니면 가끔 기분을 구름으로
-        if (!v.emote && !p.sleeping && isNight(Date.now()) && Math.random() < 0.5) {
+        // 밤엔 하품, 아니면 가끔 기분을 구름으로 (집중 모드엔 혼잣말 없이 조용히)
+        const chatty = !state.focus && !v.emote && !p.sleeping;
+        if (chatty && isNight(Date.now()) && Math.random() < 0.5) {
           say(v, pick(['하암..', '졸려..', '밤이 깊었네']), 2);
-        } else if (!v.emote && !p.sleeping && Math.random() < 0.4) {
+        } else if (chatty && Math.random() < 0.4) {
           const mood = moodOf(p);
           setEmote(v, mood === 'happy' ? pick(['note', 'heart']) : mood === 'sad' ? 'sadDrop' : 'dots', 2);
         }
@@ -953,7 +1101,9 @@ function socialize(dt, now) {
       const dir = Math.sign(dx) || 1;
       va.vx -= dir * 160; va.vy = Math.min(va.vy, -200); va.sv += 2;
       vb.vx += dir * 160; vb.vy = Math.min(vb.vy, -200); vb.sv += 2;
-      if (moodOf(a) !== 'sad' && moodOf(b) !== 'sad' && Math.random() < 0.6) greet(a, va, b, vb);
+      const da = dirtLevel(a, stageOf(a)) >= 2, db = dirtLevel(b, stageOf(b)) >= 2;
+      if (da !== db) say(da ? vb : va, pick(['으, 냄새..', '꼬질이다!', '씻고 와~']), 2);   // 꼬질한 친구는 피한다
+      else if (moodOf(a) !== 'sad' && moodOf(b) !== 'sad' && Math.random() < 0.6) greet(a, va, b, vb);
       else setEmote(Math.random() < 0.5 ? va : vb, 'exclaim', 1);
     }
   }
@@ -1042,8 +1192,52 @@ function drawBall(c) {
   drawSprite(c, 'ball', ball.x, ball.y + 4, 3);
 }
 
+// ===================== 빗자루로 응가 치우기 =====================
+const SWEEP_TIME = 1.1;
+const sweeps = [];   // { p, f, x, t, delay } — f는 응가 위치(0~1)
+const sweepOf = (p, f) => sweeps.find((s) => s.p === p && s.f === f);
+
+function sweepPoop(p, f, delay = 0) {
+  if (sweepOf(p, f)) return;
+  sweeps.push({ p, f, x: poopX(f), t: 0, delay });
+}
+
 function drawPoops(c) {
-  for (const p of state.pets) for (const f of p.poops) drawSprite(c, 'poop', poopX(f), floorY() - 2, 2);
+  for (const p of state.pets) {
+    for (const f of p.poops) {
+      const s = sweepOf(p, f);
+      const live = s && s.delay <= 0;
+      // 쓸리는 동안 들썩이다가 막판엔 깜빡이며 사라진다
+      if (live && s.t > SWEEP_TIME * 0.7 && Math.floor(s.t * 20) % 2) continue;
+      const jit = live ? Math.round(Math.sin(s.t * 40)) * 2 : 0;
+      drawSprite(c, 'poop', poopX(f) + jit, floorY() - 2, 2);
+    }
+  }
+}
+
+function updateSweeps(c, dt) {
+  for (let i = sweeps.length - 1; i >= 0; i--) {
+    const s = sweeps[i];
+    if (s.delay > 0) { s.delay -= dt; continue; }
+    s.t += dt;
+    const k = s.t / SWEEP_TIME;
+    if (k >= 1 || !state.pets.includes(s.p)) {
+      const j = s.p.poops.indexOf(s.f);
+      if (j >= 0) s.p.poops.splice(j, 1);
+      emit(s.x, floorY() - 12, 'sparkle', { n: 3, spread: 50, up: 120 });
+      sweeps.splice(i, 1);
+      persist();
+      continue;
+    }
+    // 위에서 쓱 내려와서 좌우로 슥슥 세 번
+    const sw = Math.sin(k * Math.PI * 6), dir = Math.cos(k * Math.PI * 6);
+    const bx = s.x + 10 + sw * 16;
+    const drop = k < 0.12 ? (0.12 - k) * 200 : 0;
+    drawSprite(c, dir > 0 ? 'broom' : 'broomL', bx, floorY() + 2 - drop, 3);
+    if (!drop && Math.random() < dt * 12) {
+      emit(bx - dir * 12, floorY() - 4, 'puff', { n: 1, spread: 50, up: 50, life: 0.5, gravity: 60 });
+    }
+  }
 }
 
 function updateParticles(c, dt) {
@@ -1060,6 +1254,54 @@ function updateParticles(c, dt) {
   }
 }
 
+// ===================== 꼬질꼬질 · 문질문질 =====================
+// 꼬질한 말랑이 주변엔 냄새가 피어오르고, 아주 꼬질하면 파리가 맴돈다
+function drawGrime(c, t, dt) {
+  for (const p of state.pets) {
+    const v = viewOf(p), g = v.geo;
+    if (!g || v.inside) continue;
+    const lv = dirtLevel(p, stageOf(p));
+    if (lv >= 2 && Math.random() < dt * 1.2) {
+      emit(g.cx + rand(-g.rx, g.rx), g.top + 18, 'stink', { n: 1, spread: 10, up: 30, life: 1.2, gravity: -10 });
+    }
+    if (lv >= 3) {
+      for (let i = 0; i < 2; i++) {
+        const a = t * (3 + i) + i * 2.5 + v.wob;
+        drawSprite(c, 'fly', g.cx + Math.cos(a) * (g.rx + 14), g.top + 22 + Math.sin(a * 1.7) * 10, 2);
+      }
+    }
+  }
+}
+
+// 꼬질한 말랑이 위에서 마우스를 좌우로 문지르면 뽀득뽀득 씻겨진다
+let scrub = { id: null, x: 0, dir: 0, n: 0 };
+function updateScrub() {
+  const p = !mouse.down && hoverId ? state.pets.find((x) => x.id === hoverId) : null;
+  if (!p || p.sleeping || stageOf(p) === 'egg' || p.clean >= 100) { scrub.id = null; return; }
+  if (scrub.id !== p.id) { scrub = { id: p.id, x: mouse.x, dir: 0, n: 0 }; return; }
+  const dx = mouse.x - scrub.x;
+  if (Math.abs(dx) < 8) return;
+  scrub.x = mouse.x;
+  if (Math.sign(dx) === scrub.dir) return;
+  scrub.dir = Math.sign(dx);
+  if (++scrub.n < 2) return;   // 한 번 스친 건 빼고, 왔다 갔다 해야 문지르기
+  const v = viewOf(p);
+  const was = p.clean;
+  p.clean = clamp(p.clean + 3, 0, 100);
+  v.sv += 0.8;
+  v.squint = 0.4;
+  emit(mouse.x, mouse.y, 'ring', { n: 1, spread: 40, up: 70, gravity: -40, life: 0.8 });
+  if (scrub.n % 7 === 0) say(v, pick(['간질간질', '시원해~', '뽀득뽀득', '거기 거기!']), 1.5);
+  if (was < 100 && p.clean >= 100) {
+    p.care.clean++;
+    p.happy = clamp(p.happy + 5, 0, 100);
+    setEmote(v, 'sparkle', 2);
+    emit(v.x, v.y - 30, 'sparkle', { n: 5, spread: 80, up: 160 });
+    toast(`${josa(p.name, '이', '가')} 뽀득뽀득 깨끗해졌어요!`);
+    persist();
+  }
+}
+
 // ===================== 메인 루프 =====================
 let lastFrame = performance.now();
 function frame(now) {
@@ -1069,8 +1311,10 @@ function frame(now) {
   const fy = floorY();
 
   ctx.clearRect(0, 0, W, H);
+  if (homeMark.shakeT > 0) homeMark.shakeT -= dt;
   drawHomeMark(ctx, t);
   drawPoops(ctx);
+  updateSweeps(ctx, dt);
   for (const p of state.pets) updateView(p, viewOf(p), dt);
   updateVisitors(dt);
   socialize(dt, t);
@@ -1083,12 +1327,24 @@ function frame(now) {
     return score(a) - score(b);
   });
   for (const vis of visitors) drawPet(ctx, vis.pet, vis.v, stageOf(vis.pet), t, fy);
-  for (const p of order) drawPet(ctx, p, viewOf(p), stageOf(p), t, fy);
+  for (const p of order) {
+    const v = viewOf(p);
+    if (v.inside) {
+      // 현관으로 들어가는 중: 깜빡깜빡하다 쏙
+      if (v.enterT > 0 && Math.floor(v.enterT * 16) % 2) drawPet(ctx, p, v, stageOf(p), t, fy);
+      v.geo = null;
+      continue;
+    }
+    drawPet(ctx, p, v, stageOf(p), t, fy);
+  }
   if (ball) drawBall(ctx);
   for (const f of foods) drawSprite(ctx, f.sprite, f.x, f.y, PX);
+  drawGrime(ctx, t, dt);
+  updateScrub();
   updateParticles(ctx, dt);
 
   const cardFor = card.hidden ? null : state.selectedId;
+  const focusP = state.focus ? focusPet() : null;
   for (const p of order) {
     const v = viewOf(p);
     if (!v.geo || v.held) continue;
@@ -1096,21 +1352,31 @@ function frame(now) {
       drawLabel(ctx, p.name, v.geo.cx, v.geo.top - 14);
       continue;
     }
+    // 방금 보낸 사진은 머리 위에 폴라로이드로
+    const top = v.photo ? drawPhotoCard(ctx, v.photo.thumb, v.geo.cx, v.geo.top) : v.geo.top;
     const icon = v.emote ? v.emote.icon : p.sleeping ? 'zee' : null;
-    if (icon) drawCloud(ctx, v.geo.cx, v.geo.top, icon, t);
-    else if (v.speech) drawSpeech(ctx, v.speech.text, v.geo.cx, v.geo.top);
+    if (icon) drawCloud(ctx, v.geo.cx, top, icon, t);
+    else if (v.speech) drawSpeech(ctx, v.speech.text, v.geo.cx, top);
+    else if (p === focusP) drawSpeech(ctx, '집중 중', v.geo.cx, top, 'focus');
   }
-  // 놀러 온 친구네 말랑이는 쪽지를 말풍선으로 보여 준다
+  // 다들 자고 있으면 집중 구름은 집 표지 위에
+  if (state.focus && !focusP && homeMark.geo) drawSpeech(ctx, '집중 중', homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y, 'focus');
+  // 놀러 온 친구네 말랑이는 쪽지(와 사진)를 말풍선으로 보여 준다
   for (const vis of visitors) {
     const v = vis.v;
     if (!v.geo) continue;
-    if (vis.pet.id === hoverVisitor) drawLabel(ctx, `${vis.nick}의 ${vis.pet.name}`, v.geo.cx, v.geo.top - 14);
-    else if (v.emote) drawCloud(ctx, v.geo.cx, v.geo.top, v.emote.icon, t);
-    else drawSpeech(ctx, vis.text, v.geo.cx, v.geo.top);
+    if (vis.pet.id === hoverVisitor) { drawLabel(ctx, `${vis.nick}의 ${vis.pet.name}`, v.geo.cx, v.geo.top - 14); continue; }
+    // 쪽지가 오면 잠깐 말풍선으로 말하고, 평소엔 그냥 같이 논다
+    const talking = vis.msgT > 0;
+    const top = talking && vis.thumb ? drawPhotoCard(ctx, vis.thumb, v.geo.cx, v.geo.top) : v.geo.top;
+    if (v.emote) drawCloud(ctx, v.geo.cx, top, v.emote.icon, t);
+    else if (talking && vis.text) drawSpeech(ctx, vis.text, v.geo.cx, top);
   }
 
   if (home.hidden && overHomeMark(mouse) && !hoverId && !(mouse.down && mouse.down.dragging)) {
-    drawLabel(ctx, state.markLocked ? '말랑이네 · 고정됨' : '말랑이네', homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y - 12);
+    const zzz = state.pets.filter((p) => p.sleeping && viewOf(p).inside).length;
+    const label = (state.markLocked ? '말랑이네 · 고정됨' : '말랑이네') + (zzz ? ` · 쿨쿨 ${zzz}` : '');
+    drawLabel(ctx, label, homeMark.geo.x + homeMark.geo.w / 2, homeMark.geo.y - 12);
   }
   if (!home.hidden) drawRoom(t, dt);
 
@@ -1170,6 +1436,7 @@ function petAt(pt) {
 function poopAt(pt) {
   for (const p of state.pets) {
     for (let i = 0; i < p.poops.length; i++) {
+      if (sweepOf(p, p.poops[i])) continue;
       const x = poopX(p.poops[i]);
       if (Math.abs(pt.x - x) < 14 && pt.y > floorY() - 20 && pt.y < floorY() + 6) return { p, i };
     }
@@ -1196,10 +1463,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if (vis) return visitorClicked(vis);
   const hit = poopAt(pt);
   if (hit) {
-    hit.p.poops.splice(hit.i, 1);
+    sweepPoop(hit.p, hit.p.poops[hit.i]);
     hit.p.clean = clamp(hit.p.clean + 5, 0, 100);
-    emit(pt.x, floorY() - 10, 'sparkle', { n: 3, spread: 50, up: 120 });
-    persist();
     return;
   }
   if (overHomeMark(pt)) {
@@ -1304,7 +1569,8 @@ function closeCard() {
 function placeCard() {
   if (card.hidden) return;
   const p = selected();
-  const g = p && viewOf(p).geo;
+  const v = p && viewOf(p);
+  const g = v && (v.inside ? roomGeo(p) : v.geo);
   if (!g) return closeCard();
   const w = card.offsetWidth, h = card.offsetHeight;
   card.style.left = Math.round(clamp(g.cx - w / 2, 10, W - w - 10)) + 'px';
@@ -1341,6 +1607,8 @@ function placeHome() {
 function refreshHome() {
   if (home.hidden) return;
   $('homeCount').textContent = `식구 ${state.pets.length}/${MAX_PETS}`;
+  const wl = weatherText();
+  if ($('wLine').textContent !== wl) $('wLine').textContent = wl;
 }
 
 function roomViewOf(p) {
@@ -1364,7 +1632,263 @@ function rectO(c, x, y, w, h, color) {
   c.fillRect(x, y, w, h);
 }
 
-function drawRoomBg(c) {
+// ===================== 창밖 (날씨 · 시간 · 달) =====================
+const WIN = { x: 18, y: 12, w: 60, h: 50 };
+const WEATHER_KO = { clear: '맑음', partly: '구름 조금', cloudy: '흐림', fog: '안개', rain: '비', snow: '눈', storm: '천둥번개' };
+const MOON_KO = ['삭 (달이 숨었어요)', '초승달', '상현달', '차오르는 달', '보름달', '기우는 달', '하현달', '그믐달'];
+let weather = { kind: 'clear', temp: null, status: 'loading' };
+const fallers = [];     // 창밖에 내리는 비·눈
+const glassDrops = [];  // 유리창을 타고 흘러내리는 빗방울
+let fallKind = null;
+let flashT = 0, flashWait = rand(4, 9);
+
+// Open-Meteo 날씨 코드(WMO) → 창밖 모습
+function weatherKind(code) {
+  if (code === 0) return 'clear';
+  if (code <= 2) return 'partly';
+  if (code === 3) return 'cloudy';
+  if (code === 45 || code === 48) return 'fog';
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return 'rain';
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'snow';
+  if (code >= 95) return 'storm';
+  return 'cloudy';
+}
+
+// 달의 위상 0~1 (0 삭, 0.5 보름) — 2000-01-06 18:14 UTC 삭을 기준으로 삭망월 29.53일
+function moonPhase(now) {
+  const days = (now - Date.UTC(2000, 0, 6, 18, 14)) / 86400000;
+  return (((days / 29.530588853) % 1) + 1) % 1;
+}
+const moonName = (ph) => MOON_KO[Math.round(ph * 8) % 8];
+
+const hourF = (now) => { const d = new Date(now); return d.getHours() + d.getMinutes() / 60; };
+function skyPhase(h) {
+  if (h < 5 || h >= 20) return 'night';
+  if (h < 6.5) return 'dawn';
+  if (h < 17) return 'day';
+  if (h < 18.5) return 'sunset';
+  return 'dusk';
+}
+// 하늘 [위, 아래] — [맑을 때, 흐릴 때]
+const SKY = {
+  night:  [['#1B2340', '#2E3866'], ['#22252F', '#30333D']],
+  dawn:   [['#8FA3D9', '#F4B79A'], ['#8C94A8', '#B8A7A4']],
+  day:    [['#7FC4EC', '#C4E7F7'], ['#A3AEB8', '#C6CDD3']],
+  sunset: [['#F29A6B', '#F7D08A'], ['#A8968E', '#C9B49E']],
+  dusk:   [['#4A4B8C', '#C9809A'], ['#4A4D5E', '#6E6A78']],
+};
+
+// 칸 단위 동그라미. lit(nx, ny)가 거짓인 칸은 dim 색으로
+function drawDisk(c, cx, cy, R, px, color, lit = null, dim = null) {
+  for (let j = -R; j < R; j++) {
+    for (let i = -R; i < R; i++) {
+      const nx = (i + 0.5) / R, ny = (j + 0.5) / R;
+      if (nx * nx + ny * ny > 1) continue;
+      const on = !lit || lit(nx, ny);
+      if (!on && !dim) continue;
+      c.fillStyle = on ? color : dim;
+      c.fillRect(cx + i * px, cy + j * px, px, px);
+    }
+  }
+}
+
+// 오늘 밤 달 모양 그대로 (북반구: 차오를 땐 오른쪽부터 밝다)
+function drawMoon(c, cx, cy, ph) {
+  const k = Math.cos(2 * Math.PI * ph);
+  const lit = (nx, ny) => {
+    const edge = k * Math.sqrt(1 - ny * ny);
+    return ph < 0.5 ? nx > edge : nx < -edge;
+  };
+  drawDisk(c, snap(cx, 2), snap(cy, 2), 5, 2, '#F7E8A6', lit, 'rgba(255,255,255,0.12)');
+}
+
+function drawSun(c, cx, cy, color, t) {
+  cx = snap(cx, 2); cy = snap(cy, 2);
+  c.fillStyle = color;
+  // 햇살이 깜빡깜빡
+  const r = Math.sin(t * 2) > 0 ? 14 : 12;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) c.fillRect(cx + dx * r - 1, cy + dy * r - 1, 2, 2);
+  drawDisk(c, cx, cy, 4, 2, color);
+}
+
+function drawPixelCloud(c, x, y, w, color) {
+  c.fillStyle = color;
+  c.fillRect(x, y + 4, w, 6);
+  c.fillRect(x + 4, y, Math.round(w * 0.45 / 2) * 2, 6);
+  c.fillRect(x + Math.round(w * 0.5 / 2) * 2, y + 2, Math.round(w * 0.36 / 2) * 2, 4);
+}
+
+function drawWindow(c, t, dt) {
+  const { x, y, w, h } = WIN;
+  const now = Date.now();
+  const hf = hourF(now);
+  const ph = skyPhase(hf);
+  const kind = weather.kind;
+  const wet = kind === 'rain' || kind === 'storm';
+  const gloomy = wet || kind === 'cloudy' || kind === 'snow' || kind === 'fog';
+  const dark = ph === 'night' || ph === 'dusk';
+  const [top, bottom] = SKY[ph][gloomy ? 1 : 0];
+
+  // 커튼 봉
+  c.fillStyle = T.border;
+  c.fillRect(x - 14, y - 8, w + 28, 2);
+  rectO(c, x, y, w, h, top);
+  c.save();
+  c.beginPath();
+  c.rect(x, y, w, h);
+  c.clip();
+  // 아래로 갈수록 밝아지는 띠 (도트라 계단식)
+  c.fillStyle = bottom;
+  for (let i = 0; i < 4; i++) {
+    c.globalAlpha = 0.25;
+    c.fillRect(x, y + Math.round(h * (0.3 + i * 0.17) / 2) * 2, w, h);
+  }
+  c.globalAlpha = 1;
+
+  // 맑은 밤엔 별이 반짝
+  if (dark && !gloomy) {
+    c.fillStyle = '#FFF6D5';
+    for (let i = 0; i < 12; i++) {
+      if (Math.sin(t * 1.5 + i * 1.7) < -0.4) continue;
+      c.fillRect(x + snap((i * 37) % w, 2), y + snap((i * 23) % (h * 0.6), 2), 2, 2);
+    }
+  }
+
+  // 해 · 달 — 오전/저녁엔 왼쪽 칸, 오후/새벽엔 오른쪽 칸
+  const leftPane = x + w * 0.25, rightPane = x + w * 0.75;
+  if (kind === 'clear' || kind === 'partly') {
+    if (dark) {
+      drawMoon(c, hf >= 12 ? leftPane : rightPane, y + h * 0.26, moonPhase(now));
+    } else {
+      const low = ph === 'day' ? 0 : 1;   // 해 뜰 때·질 때는 낮게, 붉게
+      drawSun(c, hf < 12 ? leftPane : rightPane, y + h * (0.26 + low * 0.34), low ? '#FFB36B' : '#FFE08A', t);
+    }
+  }
+
+  // 구름이 천천히 흘러간다
+  const nCloud = { clear: 1, partly: 2, cloudy: 4, fog: 2, rain: 4, snow: 3, storm: 4 }[kind] || 1;
+  const cloudCol = gloomy ? (dark ? '#3C4050' : '#8E979F') : dark ? '#4E5578' : '#FFFFFF';
+  for (let i = 0; i < nCloud; i++) {
+    const cw = 16 + (i % 2) * 8;
+    const cx = x - cw + ((t * (2.5 + i * 1.1) + i * 41) % (w + cw * 2));
+    drawPixelCloud(c, snap(cx, 2), y + 2 + ((i * 9) % 22), cw, cloudCol);
+  }
+
+  // 창밖에 내리는 비 · 눈
+  const falling = wet || kind === 'snow' ? kind : null;
+  if (falling !== fallKind) { fallers.length = 0; fallKind = falling; }
+  if (falling) {
+    const snow = falling === 'snow';
+    const want = snow ? 18 : falling === 'storm' ? 36 : 26;
+    while (fallers.length < want) {
+      fallers.push({ x: rand(0, w + 10), y: rand(-h, h), v: snow ? rand(8, 18) : rand(90, 150), ph: rand(0, 6) });
+    }
+    c.fillStyle = snow ? '#FFFFFF' : 'rgba(225,238,255,0.7)';
+    for (const f of fallers) {
+      f.y += f.v * dt;
+      f.x += snow ? Math.sin(t * 2 + f.ph) * 6 * dt : -f.v * 0.2 * dt;   // 비는 바람에 살짝 비스듬히
+      if (f.y > h) { f.y = -6; f.x = rand(0, w + 10); }
+      if (f.x < -4) f.x += w + 8;
+      if (snow) c.fillRect(x + snap(f.x, 2), y + snap(f.y, 2), 2, 2);
+      else c.fillRect(x + Math.round(f.x), y + Math.round(f.y), 1, 5);
+    }
+  }
+
+  // 안개
+  if (kind === 'fog') {
+    c.fillStyle = 'rgba(228,230,235,0.45)';
+    c.fillRect(x, y, w, h);
+    for (let i = 0; i < 3; i++) c.fillRect(x - 30 + snap((t * 4 + i * 25) % (w + 30), 2), y + 12 + i * 12, 30, 4);
+  }
+
+  // 번쩍! (천둥번개)
+  if (kind === 'storm' && (flashWait -= dt) <= 0) { flashT = 0.2; flashWait = rand(4, 10); }
+  if (flashT > 0) {
+    c.fillStyle = 'rgba(255,255,235,0.7)';
+    c.fillRect(x, y, w, h);
+    c.fillStyle = '#FFF4B0';
+    const bx = x + w * 0.62;
+    [[0, 0], [-2, 4], [0, 8], [-4, 12], [-2, 16], [-6, 20]].forEach(([dx, dy]) => c.fillRect(snap(bx + dx, 2), y + dy, 2, 4));
+  }
+
+  // 유리창을 타고 주르륵 흐르는 빗방울
+  if (wet) {
+    while (glassDrops.length < 7) glassDrops.push({ x: snap(rand(2, w - 4), 2), y: rand(-10, h), v: 0, max: rand(14, 30), wait: rand(0, 3) });
+    for (const d of glassDrops) {
+      if (d.wait > 0) { d.wait -= dt; d.v = 0; } else d.v = Math.min(d.max, d.v + 30 * dt);
+      if (d.v > 0 && Math.random() < dt * 0.5) d.wait = rand(0.3, 1.2);   // 멈칫했다가 다시
+      d.y += d.v * dt;
+      if (d.y > h + 4) Object.assign(d, { x: snap(rand(2, w - 4), 2), y: rand(-6, h * 0.4), wait: rand(0.5, 2.5), v: 0 });
+      c.fillStyle = 'rgba(220,236,255,0.35)';
+      c.fillRect(x + d.x, y + d.y - 10, 1, 10);
+      c.fillStyle = 'rgba(235,245,255,0.9)';
+      c.fillRect(x + d.x - 1, y + Math.round(d.y), 2, 3);
+    }
+  } else {
+    glassDrops.length = 0;
+  }
+  c.restore();
+  if (flashT > 0) flashT -= dt;
+
+  // 창살 + 창틀
+  c.fillStyle = T.border;
+  c.fillRect(x + w / 2 - 1, y, 2, h);
+  c.fillRect(x, y + h / 2 - 1, w, 2);
+  rectO(c, x - 4, y + h + 2, w + 8, 2, T.floor);
+  // 양옆 커튼 (끈으로 묶어 둠)
+  for (const cx of [x - 11, x + w + 6]) {
+    rectO(c, cx, y - 6, 5, Math.round(h * 0.55), T.warn);
+    rectO(c, cx + 1, y - 6 + Math.round(h * 0.55) + 2, 3, 12, T.warn);
+    c.fillStyle = T.hunger;
+    c.fillRect(cx - 1, y - 6 + Math.round(h * 0.55), 7, 2);
+  }
+  return { dark: ph === 'night' ? 0.22 : ph === 'dusk' ? 0.12 : 0, wet };
+}
+
+function weatherText() {
+  const w = weather.status === 'ok' ? `${WEATHER_KO[weather.kind]} ${weather.temp}°`
+    : weather.status === 'fail' ? '날씨를 못 불러왔어요' : '날씨 확인 중..';
+  return `${state.weatherLoc.name} · ${w} · 오늘 밤 ${moonName(moonPhase(Date.now()))}`;
+}
+
+async function fetchWeather() {
+  const { lat, lon } = state.weatherLoc;
+  try {
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`);
+    const cur = (await r.json()).current;
+    weather = { kind: weatherKind(cur.weather_code), temp: Math.round(cur.temperature_2m), status: 'ok' };
+  } catch {
+    if (weather.status !== 'ok') weather.status = 'fail';   // 인터넷이 없으면 맑은 하늘로
+  }
+  refreshHome();
+}
+
+async function setWeatherPlace(q) {
+  q = cleanText(q, 30);
+  if (!q) return;
+  try {
+    // '부산'으로만 찾으면 같은 이름의 작은 마을만 나와서 '부산시·부산광역시'로도 찾아보고,
+    // 그중 사람이 제일 많이 사는 곳을 고른다 (부산 → 부산광역시)
+    const search = async (name) => {
+      const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=10&language=ko&format=json`);
+      return (await r.json()).results || [];
+    };
+    const names = /시$/.test(q) ? [q] : [q, q + '시', q + '광역시', q + '특별시'];
+    const g = (await Promise.all(names.map(search))).flat().sort((a, b) => (b.population || 0) - (a.population || 0))[0];
+    if (!g) return toast('그런 지역을 못 찾았어요');
+    state.weatherLoc = { name: q.slice(0, 20), lat: g.latitude, lon: g.longitude };
+    persist();
+    $('wEdit').hidden = true;
+    weather.status = 'loading';
+    refreshHome();
+    fetchWeather();
+    toast(`이제 ${state.weatherLoc.name} 날씨가 창밖에 보여요`);
+  } catch {
+    toast('지금은 지역을 찾을 수 없어요. 인터넷을 확인해 주세요');
+  }
+}
+
+function drawRoomBg(c, t, dt) {
   // 벽 + 벽지 점무늬
   c.fillStyle = T.bg;
   c.fillRect(0, 0, RW, RH);
@@ -1372,13 +1896,7 @@ function drawRoomBg(c) {
   for (let y = 8, row = 0; y < 96; y += 14, row++) {
     for (let x = (row % 2) * 8 + 6; x < RW; x += 16) c.fillRect(x, y, 2, 2);
   }
-  // 창문
-  rectO(c, 20, 16, 48, 36, T.clean);
-  c.fillStyle = T.bg;
-  c.fillRect(28, 24, 10, 4); c.fillRect(32, 22, 8, 2);
-  c.fillStyle = T.border;
-  c.fillRect(43, 16, 2, 36); c.fillRect(20, 33, 48, 2);
-  rectO(c, 16, 54, 56, 2, T.floor);
+  const light = drawWindow(c, t, dt);
   // 바닥 (나무 판자)
   const fy = 106;
   c.fillStyle = T.border;
@@ -1391,24 +1909,35 @@ function drawRoomBg(c) {
     for (let x = (row % 2) * 30 + 14; x < RW; x += 60) c.fillRect(x, y, 2, 9);
   }
   // 화분
-  rectO(c, 82, 94, 12, 12, T.pot);
-  drawSprite(c, 'twin', 88, 90, 2);
+  rectO(c, 102, 94, 12, 12, T.pot);
+  drawSprite(c, 'twin', 108, 90, 2);
   // 밥그릇
-  rectO(c, 118, 114, 20, 6, T.pot);
+  rectO(c, 132, 114, 20, 6, T.pot);
   c.fillStyle = T.hunger;
-  c.fillRect(120, 110, 16, 4);
-  // 침대
-  rectO(c, 196, 74, 6, 42, T.pot);
-  rectO(c, 204, BED_TOP, 58, 10, T.bg);
-  rectO(c, 204, 108, 58, 6, T.pot);
-  rectO(c, 206, 90, 12, 6, T.gauge_empty);
-  rectO(c, 226, 92, 36, 14, T.fun);
+  c.fillRect(134, 110, 16, 4);
+  // 침대: 머리판 · 매트리스 · 베개
+  rectO(c, 192, 70, 6, 46, T.pot);
+  rectO(c, 192, 70, 6, 4, T.border);
+  rectO(c, 200, BED_TOP, 66, 10, T.bg);
+  rectO(c, 200, 108, 66, 6, T.pot);
+  rectO(c, 202, 88, 14, 7, T.gauge_empty);
+  return light;
+}
+
+// 이불은 자는 말랑이 위로 덮는다 (눈만 빼꼼)
+function drawBlanket(c) {
+  rectO(c, 220, BED_TOP - 1, 46, 11, T.fun);
+  c.fillStyle = T.bg;
+  c.fillRect(220, BED_TOP - 1, 46, 3);
+  c.fillStyle = T.leaf;
+  for (let x = 226; x < 266; x += 10) c.fillRect(x, BED_TOP + 2, 4, 2);
 }
 
 function drawRoom(t, dt) {
   const c = roomCtx;
-  drawRoomBg(c);
+  const light = drawRoomBg(c, t, dt);
   let slot = 0;
+  const sleepers = [];
   for (const p of state.pets) {
     const rv = roomViewOf(p);
     const st = stageOf(p);
@@ -1416,12 +1945,14 @@ function drawRoom(t, dt) {
     if (rv.blinkT <= 0) { rv.blink = 0.15; rv.blinkT = rand(2, 5); }
     rv.blink = Math.max(0, rv.blink - dt);
     rv.squint = Math.max(0, rv.squint - dt);
+    if (rv.shakeT > 0) rv.shakeT = Math.max(0, rv.shakeT - dt);
 
     let ground = ROOM_FLOOR;
     if (p.sleeping) {
-      // 자는 말랑이는 침대 위에
-      ground = BED_TOP;
-      rv.x = 222 + (slot++ % 3) * 14;
+      // 자는 말랑이는 침대에 나란히 (넷째부터는 사이사이에)
+      ground = BED_TOP + 4;   // 매트리스에 살짝 파묻혀서
+      rv.x = 230 + (slot % 3) * 15 + (slot >= 3 ? 7 : 0);
+      slot++;
       rv.y = ground; rv.vx = 0; rv.vy = 0;
     } else {
       rv.vy += 900 * dt;
@@ -1446,9 +1977,39 @@ function drawRoom(t, dt) {
     }
     rv.sv += (-rv.s * 260 - rv.sv * 9) * dt;
     rv.s = clamp(rv.s + rv.sv * dt, -0.45, 0.55);
-    drawPet(c, p, rv, st, t, ground, 2);
-    if (p.sleeping && rv.geo) drawSprite(c, 'zee', rv.x + 10, rv.geo.top + 10 - (Math.sin(t * 2) > 0 ? 2 : 0), 2);
+    if (p.sleeping) sleepers.push([p, rv, st]);
+    else drawPet(c, p, rv, st, t, ground, 2);
   }
+  for (const [p, rv, st] of sleepers) drawPet(c, p, rv, st, t, BED_TOP + 4, 2);
+  drawBlanket(c);
+  for (const [, rv] of sleepers) {
+    if (rv.geo) drawSprite(c, 'zee', rv.x + 10, rv.geo.top + 10 - (Math.sin(t * 2 + rv.wob) > 0 ? 2 : 0), 2);
+  }
+
+  // 밤엔 방이 어둑어둑 (창문만 빼고), 비 오는 날도 살짝
+  const dim = light.dark + (light.wet ? 0.08 : 0);
+  if (dim > 0) {
+    const { x, y, w, h } = WIN;
+    c.fillStyle = `rgba(18,22,50,${dim})`;
+    c.fillRect(0, 0, RW, y - 2);
+    c.fillRect(0, y + h + 2, RW, RH - y - h - 2);
+    c.fillRect(0, y - 2, x - 2, h + 4);
+    c.fillRect(x + w + 2, y - 2, RW - x - w - 2, h + 4);
+  }
+  if (flashT > 0) {
+    c.fillStyle = 'rgba(255,255,235,0.12)';
+    c.fillRect(0, 0, RW, RH);
+  }
+}
+
+// 집 창 안에 있는 말랑이의 화면 위치 (자는 말랑이의 돌봄 카드를 띄울 때)
+function roomGeo(p) {
+  if (home.hidden) return null;
+  const rv = roomViews.get(p.id);
+  if (!rv || !rv.geo) return null;
+  const r = roomCanvas.getBoundingClientRect();
+  const k = r.width / RW;
+  return { cx: r.left + rv.geo.cx * k, top: r.top + rv.geo.top * k };
 }
 
 // 방 안 말랑이를 콕 누르면 말랑
@@ -1463,6 +2024,8 @@ roomCanvas.addEventListener('pointerdown', (e) => {
     if (dx * dx + dy * dy <= 1) {
       rv.sv += 3.5;
       if (!p.sleeping) rv.squint = 0.5;
+      // 집 안에서 자는 말랑이는 여기서 돌봄 카드를 연다 (깨우기 등)
+      if (viewOf(p).inside) openCard(p.id);
       return;
     }
   }
@@ -1546,6 +2109,28 @@ $('hTheme').addEventListener('click', () => {
 $('hLock').addEventListener('click', toggleMarkLock);
 $('hHide').addEventListener('click', toggleMarkHidden);
 $('hFriends').addEventListener('click', openFriends);
+$('hFocus').addEventListener('click', toggleFocus);
+// 끄기: 한 번 더 눌러야 꺼진다
+let quitArmed = null;
+$('hQuit').addEventListener('click', () => {
+  if (!quitArmed) {
+    $('hQuit').textContent = '정말 끌까요?';
+    quitArmed = setTimeout(() => { quitArmed = null; $('hQuit').textContent = '끄기'; }, 3000);
+    return;
+  }
+  persist();
+  window.malang.quit();
+});
+$('wPlace').addEventListener('click', () => {
+  const box = $('wEdit');
+  box.hidden = !box.hidden;
+  if (!box.hidden) { $('wCity').value = ''; $('wCity').focus(); }
+});
+$('wOk').addEventListener('click', () => setWeatherPlace($('wCity').value));
+$('wCity').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') setWeatherPlace(e.target.value);
+  if (e.key === 'Escape') $('wEdit').hidden = true;
+});
 // 바탕화면 등 다른 곳을 클릭하면 카드를 닫는다 (집 창은 직접 닫을 때까지 둔다)
 window.addEventListener('blur', closeCard);
 
@@ -1593,8 +2178,8 @@ function act(name) {
       startBall(v);
       break;
     case 'clean':
-      for (const f of p.poops) emit(poopX(f), floorY() - 10, 'sparkle', { n: 2, spread: 40 });
-      p.poops = [];
+      // 응가는 빗자루가 하나씩 슥슥 쓸어 간다
+      p.poops.forEach((f, i) => sweepPoop(p, f, i * 0.35));
       p.clean = 100;
       p.care.clean++;
       p.happy += 3;
@@ -1613,7 +2198,7 @@ function act(name) {
         p.sleeping = true;
         p.sleptAt = Date.now();
         p.care.sleep++;
-        toast(`${josa(p.name, '아', '야')} 잘 자~`);
+        toast(`${josa(p.name, '이', '가')} 집에 들어가서 자요. 잘 자~`);
         callSleepBuddies(p);
       }
       break;
@@ -1824,6 +2409,7 @@ window.malang.onCommand((command) => {
   if (command === 'mark:lock') toggleMarkLock();
   if (command === 'mark:reset') resetMark();
   if (command === 'friends') openFriends();
+  if (command === 'focus') toggleFocus();
   if (command === 'dnd') {
     state.dnd = !state.dnd;
     toast(state.dnd ? '방해 금지 모드: 전체화면 창이 앞에 있으면 숨어 있을게요' : '방해 금지 모드를 껐어요');
@@ -1886,7 +2472,13 @@ const friendsBox = $('friends');
 const conns = new Map();     // 친구 코드 → 인사까지 마친 연결
 const pending = new Map();   // 친구 코드 → 거는 중인 연결
 const visitors = [];         // 쪽지를 들고 놀러 온 친구네 말랑이
-const noteLog = [];          // 이번에 주고받은 쪽지
+const noteLog = [];          // 이번에 주고받은 쪽지 { code, dir: in|out|sys, text, img }
+const friendStatus = new Map();   // 친구 코드 → { focus }
+const PHOTO_MAX = 100000;    // 사진(data URL) 최대 글자 수
+const PART_SIZE = 12000;     // PeerJS json 채널은 한 번에 16KB까지라 쪼개 보낸다
+let attached = null;         // 보낼 사진 { data, thumb }
+let shakeSentAt = 0, shakeGotAt = 0;
+let chatKey = '';
 let peer = null;
 let netState = 'off';
 let fTarget = null;          // 쪽지 받을 친구 코드
@@ -1945,7 +2537,7 @@ function connectFriends() {
 }
 
 function setupConn(conn) {
-  conn.on('open', () => conn.send({ t: 'hi', code: state.myCode, nick: myNick() }));
+  conn.on('open', () => conn.send({ t: 'hi', code: state.myCode, nick: myNick(), focus: state.focus }));
   conn.on('data', (d) => onData(conn, d));
   conn.on('close', () => dropConn(conn));
   conn.on('error', () => dropConn(conn));
@@ -1972,6 +2564,7 @@ function onData(conn, d) {
       toast(`${cleanText(d.nick, 10) || fmtCode(code)}님과 친구가 됐어요`);
     }
     f.nick = cleanText(d.nick, 10) || f.nick;
+    friendStatus.set(code, { focus: !!d.focus });
     pending.delete(code);
     conns.set(code, conn);
     persist();
@@ -1980,69 +2573,239 @@ function onData(conn, d) {
   }
   const entry = [...conns].find(([, c]) => c === conn);
   if (!entry) return;   // 인사 전에 온 건 무시
-  if (d.t === 'msg') receiveNote(findFriend(entry[0]), d);
+  const f = findFriend(entry[0]);
+  if (!f) return;
+  if (d.t === 'part') receivePart(conn, d);
+  if (d.t === 'msg') receiveNote(f, d, takePhoto(conn, d.photo));
+  if (d.t === 'shake') receiveShake(f);
+  if (d.t === 'status') { friendStatus.set(f.code, { focus: !!d.focus }); refreshFriends(); }
 }
 
-function receiveNote(f, d) {
+// 사진 조각 모으기 (조각 수·크기를 제한해서 너무 큰 건 버린다)
+function receivePart(conn, d) {
+  const id = String(d.id || '').slice(0, 16);
+  const n = d.n | 0, i = d.i | 0;
+  if (!id || n < 1 || n > 10 || i < 0 || i >= n || typeof d.s !== 'string' || d.s.length > PART_SIZE) return;
+  conn.parts = conn.parts || new Map();
+  let buf = conn.parts.get(id);
+  if (!buf) {
+    if (conn.parts.size >= 4) conn.parts.delete(conn.parts.keys().next().value);
+    buf = { n, got: [] };
+    conn.parts.set(id, buf);
+  }
+  if (buf.n === n) buf.got[i] = d.s;
+}
+
+function takePhoto(conn, id) {
+  if (!id || !conn.parts) return null;
+  const buf = conn.parts.get(String(id));
+  conn.parts.delete(String(id));
+  if (!buf || buf.got.filter((x) => typeof x === 'string').length !== buf.n) return null;
+  const data = buf.got.join('');
+  return data.length <= PHOTO_MAX + 1000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(data) ? data : null;
+}
+
+function logNote(entry) {
+  noteLog.push(entry);
+  if (noteLog.length > 60) noteLog.shift();
+}
+
+function broadcastStatus() {
+  for (const c of conns.values()) if (c.open) c.send({ t: 'status', focus: state.focus });
+}
+
+function receiveNote(f, d, img) {
   const text = cleanText(d.text, 40);
-  if (!f || !text) return;
+  if (!text && !img) return;
   const nick = friendName(f);
-  noteLog.push({ dir: 'in', nick, text });
-  if (noteLog.length > 30) noteLog.shift();
-  spawnVisitor(f, nick, text, d.pet && typeof d.pet === 'object' ? d.pet : {});
-  toast(`${nick}의 말랑이가 쪽지를 가져왔어요!`);
-  notify(`${nick}: ${text}`);
+  logNote({ code: f.code, dir: 'in', text, img });
+  spawnVisitor(f, nick, text, d.pet && typeof d.pet === 'object' ? d.pet : {}, img);
+  toast(`${nick}의 말랑이가 ${img ? '사진' : '쪽지'}을 가져왔어요!`);
+  if (!state.focus) notify(`${nick}: ${text || '사진을 보냈어요'}`);
   refreshFriends();
+}
+
+// 친구가 내 말랑이를 흔들었다! (집 안에서 자는 아이는 집째로 들썩)
+function receiveShake(f) {
+  const now = Date.now();
+  if (now - shakeGotAt < 2000) return;
+  shakeGotAt = now;
+  const nick = friendName(f);
+  for (const p of state.pets) {
+    const v = viewOf(p);
+    if (v.inside) {
+      homeMark.shakeT = 1.2;
+      roomViewOf(p).shakeT = 1.2;
+      continue;
+    }
+    v.shakeT = 1.2;
+    v.sv += 2.5;
+    if (!p.sleeping && stageOf(p) !== 'egg') setEmote(v, 'exclaim', 1.4);
+  }
+  logNote({ code: f.code, dir: 'sys', text: `${nick}님이 내 말랑이를 흔들었어요` });
+  toast(`${nick}님이 말랑이를 흔들었어요!`);
+  if (!state.focus) notify(`${nick}님이 말랑이를 흔들었어요!`);
+  refreshFriends();
+}
+
+function sendShake() {
+  if (!fTarget) return toast('흔들 친구를 골라 주세요');
+  const conn = conns.get(fTarget);
+  if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요');
+  const f = findFriend(fTarget);
+  if ((friendStatus.get(fTarget) || {}).focus) return toast(`${friendName(f)}님은 집중 중이에요. 흔들기는 나중에!`);
+  if (Date.now() - shakeSentAt < 3000) return toast('조금 있다가 다시 흔들어 주세요');
+  shakeSentAt = Date.now();
+  conn.send({ t: 'shake' });
+  logNote({ code: fTarget, dir: 'sys', text: `${friendName(f)}의 말랑이를 흔들었어요` });
+  refreshFriends();
+}
+
+// 사진을 작게 줄여서 JPEG data URL로 (P2P로 보내기 좋게 100KB 아래로)
+async function compressPhoto(blob) {
+  if (!blob || !String(blob.type).startsWith('image/')) throw new Error('not image');
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const cv = document.createElement('canvas');
+    let data = '';
+    for (const [side, q] of [[400, 0.8], [340, 0.7], [280, 0.6], [220, 0.55], [160, 0.5]]) {
+      const k = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
+      cv.width = Math.max(1, Math.round(img.naturalWidth * k));
+      cv.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const c = cv.getContext('2d');
+      c.fillStyle = '#FFFFFF';
+      c.fillRect(0, 0, cv.width, cv.height);
+      c.drawImage(img, 0, 0, cv.width, cv.height);
+      data = cv.toDataURL('image/jpeg', q);
+      if (data.length <= PHOTO_MAX) return data;
+    }
+    throw new Error('too big');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// 바탕화면 말풍선용 작은 정사각 썸네일
+function makeThumb(data, size = 40) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const img = new Image();
+  img.onload = () => {
+    const c = cv.getContext('2d');
+    const k = size / Math.min(img.naturalWidth, img.naturalHeight);
+    const w = img.naturalWidth * k, h = img.naturalHeight * k;
+    c.imageSmoothingQuality = 'high';
+    c.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+  };
+  img.src = data;
+  return cv;
+}
+
+async function attachPhoto(blob) {
+  try {
+    const data = await compressPhoto(blob);
+    attached = { data, thumb: makeThumb(data) };
+    $('fAttachImg').src = data;
+    $('fAttach').hidden = false;
+    placeFriends();
+    $('fMsg').focus();
+  } catch {
+    toast('이 사진은 보낼 수 없어요');
+  }
+}
+
+function clearAttach() {
+  attached = null;
+  $('fAttach').hidden = true;
+  $('fAttachImg').removeAttribute('src');
+  $('fFile').value = '';
 }
 
 function sendNote() {
   const input = $('fMsg');
   const text = cleanText(input.value, 40);
-  if (!text) return;
+  const photo = attached;
+  if (!text && !photo) return;
   if (!fTarget) return toast('쪽지를 받을 친구를 골라 주세요');
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요. 둘 다 켜져 있어야 전해져요');
   // 깨어 있는 말랑이가 쪽지를 들고 간다
   const p = [selected(), ...state.pets].find((x) => x && stageOf(x) !== 'egg' && !x.sleeping)
     || state.pets.find((x) => stageOf(x) !== 'egg');
+  // 사진은 조각내서 먼저 보내고, 쪽지에 사진 번호를 붙인다
+  let photoId = null;
+  if (photo) {
+    photoId = Math.random().toString(36).slice(2, 10);
+    const n = Math.ceil(photo.data.length / PART_SIZE);
+    for (let i = 0; i < n; i++) conn.send({ t: 'part', id: photoId, i, n, s: photo.data.slice(i * PART_SIZE, (i + 1) * PART_SIZE) });
+  }
   conn.send({
-    t: 'msg', text,
+    t: 'msg', text, photo: photoId,
     pet: p ? { name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p) } : null,
   });
-  noteLog.push({ dir: 'out', nick: friendName(findFriend(fTarget)), text });
-  if (noteLog.length > 30) noteLog.shift();
+  logNote({ code: fTarget, dir: 'out', text, img: photo ? photo.data : null });
   input.value = '';
+  clearAttach();
+  // 내 말랑이도 보낸 말을 말풍선으로 한 번 읽어 주고 출발한다
   if (p) {
     const v = viewOf(p);
-    if (!p.sleeping) { v.vy = -520; v.sv -= 3; }
-    setEmote(v, 'letter', 1.5);
-    toast(`${josa(p.name, '이', '가')} 쪽지를 들고 출발했어요!`);
+    if (!v.inside) {
+      if (!p.sleeping) { v.vy = -520; v.sv -= 3; }
+      if (text) say(v, text, 5);
+      else setEmote(v, 'letter', 3);
+      if (photo) v.photo = { thumb: photo.thumb, t: 4 };
+    }
+    toast(`${friendName(findFriend(fTarget))}에게 ${photo ? '사진' : '쪽지'}을 보냈어요`);
   } else {
     toast('쪽지를 보냈어요');
   }
   refreshFriends();
 }
 
-function spawnVisitor(f, nick, text, info) {
+// 친구네 말랑이는 친구마다 한 마리만. 처음 쪽지가 올 때 놀러 와서,
+// 친구가 켜져 있는 동안 계속 머물며 새 쪽지를 말풍선으로 전한다.
+const VISITOR_TALK = 12;   // 말풍선이 떠 있는 시간(초)
+function visitorLooks(info) {
   const stage = ['baby', 'child', 'adult'].includes(info.stage) ? info.stage : 'child';
-  const pet = {
-    id: 'visitor-' + Math.random().toString(36).slice(2), visitor: true,
+  return {
     name: cleanText(info.name, 10) || '말랑이',
     sprout: SPROUTS.includes(info.sprout) ? info.sprout : 'twin',
     color: /^#[0-9A-Fa-f]{6}$/.test(String(info.color || '')) ? info.color : null,
     form: stage === 'adult' && Object.hasOwn(FORMS, String(info.form || '')) ? info.form : null,
     born: Date.now() - EGG_MS - { baby: 2, child: 30, adult: 80 }[stage] * HOUR,
-    hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [],
   };
-  // 하늘에서 톡 떨어져서 놀러 온다
-  const v = viewOf(pet);
-  v.x = rand(W * 0.25, W * 0.75);
-  v.y = STAGES[stage].r * PX * 2;
-  v.bubbleT = Infinity;
-  setEmote(v, 'letter', 2.5);
-  emit(v.x, v.y, 'sparkle', { n: 5, spread: 100, up: 160 });
-  visitors.push({ pet, v, code: f.code, nick, text, t: 60 });
-  while (visitors.length > 3) removeVisitor(visitors[0]);
+}
+
+function spawnVisitor(f, nick, text, info, img = null) {
+  let vis = visitors.find((x) => x.code === f.code);
+  if (vis) {
+    // 이미 와 있으면 그 자리에서 폴짝 뛰고 새 쪽지를 말한다
+    Object.assign(vis.pet, visitorLooks(info));
+    vis.nick = nick;
+    vis.v.vy = -380; vis.v.sv -= 2;
+    setEmote(vis.v, 'letter', 0.8);
+  } else {
+    const pet = {
+      id: 'visitor-' + Math.random().toString(36).slice(2), visitor: true, ...visitorLooks(info),
+      hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [],
+    };
+    // 하늘에서 톡 떨어져서 놀러 온다
+    const v = viewOf(pet);
+    v.x = rand(W * 0.25, W * 0.75);
+    v.y = STAGES[stageOf(pet)].r * PX * 2;
+    v.bubbleT = Infinity;
+    setEmote(v, 'letter', 1.5);
+    emit(v.x, v.y, 'sparkle', { n: 5, spread: 100, up: 160 });
+    vis = { pet, v, code: f.code, nick };
+    visitors.push(vis);
+    while (visitors.length > 3) removeVisitor(visitors[0]);
+  }
+  vis.text = text;
+  vis.thumb = img ? makeThumb(img) : null;
+  vis.msgT = VISITOR_TALK;
 }
 
 function removeVisitor(vis) {
@@ -2055,7 +2818,9 @@ function removeVisitor(vis) {
 function updateVisitors(dt) {
   for (const vis of [...visitors]) {
     updateView(vis.pet, vis.v, dt);
-    if ((vis.t -= dt) <= 0) removeVisitor(vis);
+    vis.msgT = Math.max(0, (vis.msgT || 0) - dt);
+    // 친구가 앱을 끄면 집으로 돌아간다
+    if (!conns.has(vis.code)) removeVisitor(vis);
   }
 }
 
@@ -2069,12 +2834,12 @@ function visitorAt(pt) {
   return null;
 }
 
-// 놀러 온 말랑이를 누르면 인사하고 돌아가고, 답장 쓰기 창이 열린다
+// 놀러 온 말랑이를 누르면 인사하고, 마지막 쪽지를 다시 보여 주고, 답장 창이 열린다
 function visitorClicked(vis) {
   vis.v.sv += 3.5;
   vis.v.squint = 0.5;
-  setEmote(vis.v, 'heart', 1.5);
-  vis.t = Math.min(vis.t, 1.6);
+  setEmote(vis.v, 'heart', 0.8);
+  if (vis.text || vis.thumb) vis.msgT = VISITOR_TALK;
   fTarget = vis.code;
   openFriends();
   $('fMsg').focus();
@@ -2091,7 +2856,7 @@ function openFriends() {
 function placeFriends() {
   if (friendsBox.hidden) return;
   const w = friendsBox.offsetWidth, h = friendsBox.offsetHeight;
-  const left = friendsPos ? friendsPos.x : W - w - 330;
+  const left = friendsPos ? friendsPos.x : W - w - 345;
   const top = friendsPos ? friendsPos.y : H - h - 60;
   friendsBox.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
   friendsBox.style.top = Math.round(clamp(top, 10, H - h - 10)) + 'px';
@@ -2116,7 +2881,9 @@ function refreshFriends() {
       who.textContent = friendName(f);
       const sub = document.createElement('span');
       sub.className = 'sub';
-      sub.textContent = online ? '접속 중' : '꺼져 있음';
+      const focusing = online && (friendStatus.get(f.code) || {}).focus;
+      sub.textContent = focusing ? '집중 중' : online ? '접속 중' : '꺼져 있음';
+      if (focusing) sub.classList.add('focus');
       const del = document.createElement('button');
       del.className = 'link warn';
       del.textContent = removeArmed === f.code ? '정말?' : '삭제';
@@ -2127,13 +2894,51 @@ function refreshFriends() {
     }));
   }
   const f = fTarget && findFriend(fTarget);
-  $('fTo').textContent = f ? `${friendName(f)}에게 쪽지` : '받을 친구를 골라 주세요';
-  $('fLog').replaceChildren(...noteLog.slice(-5).map((n) => {
+  $('fTo').textContent = f ? `${friendName(f)}와의 대화` : '대화할 친구를 골라 주세요';
+  $('fShake').disabled = !f || !conns.has(f.code);
+  renderChat();
+}
+
+// 대화창: 내가 보낸 건 오른쪽, 친구가 보낸 건 왼쪽 말풍선
+function renderChat() {
+  const items = noteLog.filter((n) => !fTarget || n.code === fTarget);
+  const key = `${fTarget}|${noteLog.length}|${items.length && noteLog[noteLog.length - 1] === items[items.length - 1]}`;
+  if (key === chatKey) return;
+  chatKey = key;
+  const box = $('fLog');
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = fTarget ? '아직 주고받은 쪽지가 없어요' : '친구를 고르면 대화가 보여요';
+    box.replaceChildren(empty);
+    return;
+  }
+  box.replaceChildren(...items.slice(-30).map((n) => {
     const el = document.createElement('div');
-    el.className = n.dir;
-    el.textContent = `${n.dir === 'in' ? '←' : '→'} ${n.nick}: ${n.text}`;
+    el.className = 'msg ' + n.dir;
+    if (n.dir !== 'sys' && !fTarget) {
+      const who = document.createElement('span');
+      who.className = 'who';
+      const fr = findFriend(n.code);
+      who.textContent = n.dir === 'out' ? `→ ${fr ? friendName(fr) : ''}` : fr ? friendName(fr) : '';
+      el.append(who);
+    }
+    if (n.img) {
+      const img = document.createElement('img');
+      img.src = n.img;
+      img.alt = '사진';
+      img.addEventListener('load', () => { box.scrollTop = box.scrollHeight; });
+      el.append(img);
+    }
+    if (n.text) {
+      const tx = document.createElement('span');
+      tx.className = 'text';
+      tx.textContent = n.text;
+      el.append(tx);
+    }
     return el;
   }));
+  box.scrollTop = box.scrollHeight;
 }
 
 function addFriend() {
@@ -2172,12 +2977,23 @@ $('friendsClose').addEventListener('click', () => { friendsBox.hidden = true; })
 $('fAdd').addEventListener('click', addFriend);
 $('fCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') addFriend(); });
 $('fSend').addEventListener('click', sendNote);
+$('fShake').addEventListener('click', sendShake);
+$('fPhoto').addEventListener('click', () => $('fFile').click());
+$('fFile').addEventListener('change', (e) => { if (e.target.files[0]) attachPhoto(e.target.files[0]); });
+$('fAttachDel').addEventListener('click', clearAttach);
+// 캡처한 이미지를 쪽지 칸에 붙여넣어도 된다
+$('fMsg').addEventListener('paste', (e) => {
+  const item = [...(e.clipboardData ? e.clipboardData.items : [])].find((x) => x.type.startsWith('image/'));
+  if (!item) return;
+  e.preventDefault();
+  attachPhoto(item.getAsFile());
+});
 $('fMsg').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendNote(); });
 $('fNick').addEventListener('change', (e) => {
   state.nick = cleanText(e.target.value, 10);
   e.target.value = state.nick;
   persist();
-  for (const c of conns.values()) if (c.open) c.send({ t: 'hi', code: state.myCode, nick: myNick() });
+  for (const c of conns.values()) if (c.open) c.send({ t: 'hi', code: state.myCode, nick: myNick(), focus: state.focus });
 });
 $('copyCode').addEventListener('click', () => {
   navigator.clipboard.writeText(fmtCode(state.myCode))
@@ -2216,5 +3032,7 @@ window.addEventListener('beforeunload', persist);
 
 startNet();
 setInterval(connectFriends, 30000);
+fetchWeather();
+setInterval(fetchWeather, 30 * 60 * 1000);
 
 requestAnimationFrame(frame);

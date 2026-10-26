@@ -44,8 +44,14 @@ ipcMain.on('theme-changed', (_e, value) => {
   if (tray) tray.setContextMenu(buildMenu());
 });
 
+ipcMain.on('quit-app', () => app.quit());
+
+// 윈도우를 켤 때 같이 켜기 (설치한 exe로 실행했을 때만)
+const exePath = () => process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+const autoStart = () => app.getLoginItemSettings({ path: exePath() }).openAtLogin;
+
 // 렌더러가 가진 설정 (표지 숨김/고정, 방해 금지) — 트레이 메뉴 체크 표시용
-let prefs = { hidden: false, locked: false, dnd: true };
+let prefs = { hidden: false, locked: false, dnd: true, focus: false };
 ipcMain.on('prefs-changed', (_e, value) => {
   prefs = value;
   if (prefs.dnd) startFullscreenWatch();
@@ -156,6 +162,7 @@ function buildMenu() {
     { label: '말랑이 모두 부르기', click: () => send('gather') },
     { label: '말랑이네 열기', click: () => send('home') },
     { label: '친구 · 쪽지', click: () => send('friends') },
+    { label: '집중 모드', type: 'checkbox', checked: !!prefs.focus, click: () => send('focus') },
     {
       label: '말랑이네 표지', submenu: [
         { label: '표지 보이기', type: 'checkbox', checked: !prefs.hidden, click: () => send('mark:hidden') },
@@ -180,6 +187,10 @@ function buildMenu() {
       click: () => win && win.webContents.send('command', 'dnd'),
     },
     { label: '숨기기 / 보이기', click: toggleVisible },
+    ...(app.isPackaged ? [{
+      label: '윈도우 시작할 때 같이 켜기', type: 'checkbox', checked: autoStart(),
+      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked, path: exePath() }),
+    }] : []),
     { type: 'separator' },
     { label: '종료', click: () => app.quit() },
   ]);
@@ -234,7 +245,12 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   // 윈도우 알림이 표시되려면 앱 ID가 필요하다
   if (process.platform === 'win32') app.setAppUserModelId(process.execPath);
-  app.on('second-instance', () => win && win.show());
+  // 이미 켜져 있는데 바로가기를 또 누르면 숨어 있던 말랑이들을 다시 보여 준다
+  app.on('second-instance', () => {
+    if (!win) return;
+    hiddenByDnd = false;
+    win.show();
+  });
   app.whenReady().then(() => {
     createWindow();
     createTray();
