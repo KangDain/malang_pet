@@ -69,6 +69,46 @@
       <button class="btn" id="hFriends"><canvas class="ico" data-icon="letter"></canvas><span>친구 · 쪽지</span></button>
       <button class="btn" id="hFocus"><canvas class="ico" data-icon="focus"></canvas><span id="hFocusLabel">집중 모드</span></button>
     </div>
+    <div class="home-actions">
+      <button class="btn" id="hAdv"><canvas class="ico" data-icon="sword"></canvas><span>모험 · 요리</span></button>
+    </div>
+  </div>
+
+  <!-- 모험 창: 화면 구석에서 말랑이(와 친구들)가 알아서 싸우고 재료를 모아 온다 -->
+  <div id="adv" class="ui box" hidden>
+    <div id="advBar" class="titlebar">
+      <canvas class="ico" data-icon="sword"></canvas>
+      <span class="name">모험</span>
+      <span id="advSub" class="sub"></span>
+      <span class="spacer"></span>
+      <button id="advTab" class="link">요리</button>
+      <button id="advClose" class="link">닫기</button>
+    </div>
+    <div id="advMain">
+      <canvas id="advScene" width="276" height="100"></canvas>
+      <div id="advInfo" class="adv-info"></div>
+      <div id="advParty" class="adv-party"></div>
+      <div id="advReady">
+        <label class="field">
+          <span>보낼 말랑이</span>
+          <select id="advPet" class="input"></select>
+        </label>
+        <div class="field">
+          <span>어디로 갈까요?</span>
+          <div id="advZones" class="zones"></div>
+        </div>
+      </div>
+      <div class="home-actions">
+        <button id="advGo" class="btn primary">혼자 출발</button>
+        <button id="advTogether" class="btn">같이 가자고 하기</button>
+        <button id="advBack" class="btn">돌아오기</button>
+      </div>
+    </div>
+    <div id="advKitchen" hidden>
+      <div class="field first"><span>가방</span><div id="advBag" class="bag"></div></div>
+      <div class="field"><span>요리하기</span><div id="advRecipes" class="recipes"></div></div>
+      <div class="field"><span>만든 요리 (모험 중이면 도시락으로)</span><div id="advDishes" class="recipes"></div></div>
+    </div>
   </div>
 
   <!-- 친구에게 말랑이로 쪽지 보내기 (둘 다 켜져 있을 때 P2P로 전해진다) -->
@@ -175,5 +215,6 @@
 
   <script src="vendor/peerjs.min.js"></script>
   <script src="renderer.js"></script>
+  <script src="rpg.js"></script>
 </body>
 </html>

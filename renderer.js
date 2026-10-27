@@ -115,6 +115,7 @@ const SPR = {
   stink:    ['l ', ' l', 'l ', ' l'],
   focus:    ['    ww', '   hww', '  hhh ', ' hhh  ', 'Bhh   ', 'BB    '],
   photo:    ['  sss  ', 'sssssss', 'ssscsss', 'sscbcss', 'ssscsss', 'sssssss'],
+  sword:    ['     b', '    bb', '   bb ', 'tbbb  ', ' tt   ', 't  t  '],
   // 머리 위 새싹 (맨 아랫줄이 머리에 붙는다)
   twin:     ['ll   ll', 'lll lll', ' lllll ', '   l   '],
   single:   ['   ll', '  lll', ' lll ', '  l  '],
@@ -213,6 +214,12 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const snap = (v, px) => Math.round(v / px) * px;
 const $ = (id) => document.getElementById(id);
+
+// 다른 파일(rpg.js)이 끼어드는 자리: 매 프레임 · 1초마다 · 친구 메시지 · 먹었을 때 · 돌봄 카드 · 낚시
+const hooks = { frame: [], tick: [], data: [], eat: [], card: [], caught: [] };
+const runHooks = (name, ...args) => { for (const h of hooks[name]) h(...args); };
+// 모험 가 있는 말랑이 (state.pets에서 빠져 있다가 돌아온다)
+const awayPets = () => (state.rpg && state.rpg.away) || [];
 
 // 친구 코드 8자리 (헷갈리는 0/O, 1/I 는 뺀다)
 function makeCode() {
@@ -1216,6 +1223,7 @@ function eat(p, v, food) {
     else setEmote(v, 'heart');
   }
   clampStats(p);
+  runHooks('eat', p, v, food);
 }
 
 function gather() {
@@ -1562,6 +1570,7 @@ function stepAngler(a, p, dt) {
     a.t = 1.6;
     const fish = a.item.fish;
     if (fish) a.fish++; else a.trash++;
+    if (fish && !p.visitor) runHooks('caught', a.item);
     if (!p.visitor) p.happy = clamp(p.happy + (fish ? 3 : -1), 0, 100);
     emit(v.x, v.y - 40, fish ? 'heart' : 'sadDrop', { n: fish ? 2 : 1, spread: 40, up: 100 });
     // 같이 낚시하는 친구는 박수
@@ -1759,6 +1768,7 @@ function frame(now) {
   }
   if (!home.hidden) drawRoom(t, dt);
   updateFriendHouse(t, dt);
+  runHooks('frame', t, dt);
 
   placeCard();
   placeHome();
@@ -2019,7 +2029,8 @@ function placeHome() {
 
 function refreshHome() {
   if (home.hidden) return;
-  $('homeCount').textContent = `식구 ${state.pets.length}/${MAX_PETS}`;
+  const away = awayPets().length;
+  $('homeCount').textContent = `식구 ${state.pets.length + away}/${MAX_PETS}` + (away ? ` · 모험 ${away}` : '');
   const wl = weatherText();
   if ($('wLine').textContent !== wl) $('wLine').textContent = wl;
 }
@@ -2507,6 +2518,7 @@ function refreshCard() {
   const [care, n] = topCare(p);
   const tend = !form && st !== 'egg' && n >= 3 ? TENDENCY[care] : null;
   $('pStage').textContent = STAGES[st].label + (form ? ` · ${form.label}` : tend ? ` · ${tend}` : '');
+  runHooks('card', p);
   $('pAge').textContent = st === 'egg'
     ? `부화까지 ${Math.ceil((EGG_MS - age) / 1000)}초`
     : `태어난 지 ${fmtDuration(age - EGG_MS)}`;
@@ -2746,7 +2758,7 @@ function renderSwatches() {
 }
 
 function openModal(mode) {
-  if (mode === 'adopt' && state.pets.length >= MAX_PETS) {
+  if (mode === 'adopt' && state.pets.length + awayPets().length >= MAX_PETS) {
     return toast(`말랑이는 최대 ${MAX_PETS}마리까지 함께 살 수 있어요`);
   }
   modalMode = mode;
@@ -3076,6 +3088,7 @@ function onData(conn, d) {
     if (vis) vis.pet.sleeping = !!d.sleeping;
     refreshFriends();
   }
+  runHooks('data', conn, f, d);
 }
 
 // 사진 조각 모으기 (조각 수·크기를 제한해서 너무 큰 건 버린다)
@@ -3757,7 +3770,7 @@ if (!selected() && state.pets.length) state.selectedId = state.pets[0].id;
 if (state.pets.length && awayMs > 10 * 60 * 1000) {
   setTimeout(() => toast(`자리를 비운 동안 ${fmtDuration(awayMs)}이 흘렀어요`), 400);
 }
-if (!state.pets.length) openModal('adopt');
+if (!state.pets.length && !awayPets().length) openModal('adopt');
 
 // 픽셀 폰트가 준비되면 캔버스 글자도 갈무리로
 document.fonts.load('12px Galmuri11').catch(() => {});
@@ -3767,6 +3780,7 @@ setInterval(() => {
   advance(Date.now());
   handleEvents();
   state.pets.forEach(checkNeeds);
+  runHooks('tick');
   if (++tick % 15 === 0) persist();
 }, 1000);
 setInterval(() => { refreshCard(); refreshHome(); }, 250);

@@ -219,6 +219,39 @@ canvas { image-rendering: pixelated; }
 #fAttach img { width: 34px; height: 34px; object-fit: cover; box-shadow: 0 0 0 2px var(--border); image-rendering: auto; }
 #fPhoto { padding: 4px 6px; }
 
+/* 모험 창 */
+#adv { position: fixed; width: 296px; padding: 0 10px 10px; animation: pop .12s steps(2); }
+#adv .field.first { margin-top: 0; }
+#advScene {
+  display: block; width: 276px; height: 100px;
+  box-shadow: 0 -2px 0 0 var(--border), 0 2px 0 0 var(--border), -2px 0 0 0 var(--border), 2px 0 0 0 var(--border);
+}
+.adv-info { display: grid; gap: 3px; margin-top: 8px; }
+.adv-info .row { gap: 6px; }
+.adv-info .sub, .adv-party .sub { color: var(--text_sub); }
+.hpbar { flex: 1; height: 7px; padding: 0; background: var(--gauge_empty); box-shadow: 0 0 0 2px var(--border); }
+.hpbar i { display: block; height: 100%; background: var(--fun); }
+.hpbar.exp i { background: var(--hunger); }
+.adv-party { display: grid; gap: 4px; margin-top: 8px; }
+.adv-party:empty { display: none; }
+.adv-party .invite { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: var(--gauge_empty); }
+.zones { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.zones .btn { justify-content: flex-start; padding: 4px 6px; }
+.zones .btn.on { background: var(--bg); box-shadow: 0 -2px 0 0 var(--pet), 0 2px 0 0 var(--pet), -2px 0 0 0 var(--pet), 2px 0 0 0 var(--pet); }
+.zones .btn .sub { margin-left: auto; color: var(--text_sub); font-size: 11px; }
+select.input { cursor: pointer; }
+.bag { display: flex; flex-wrap: wrap; gap: 4px 10px; min-height: 18px; }
+.bag .item { display: inline-flex; align-items: center; gap: 3px; }
+.bag .empty, .recipes .empty { color: var(--text_sub); }
+.recipes { display: grid; gap: 4px; max-height: 150px; overflow-y: auto; }
+.recipe { display: flex; align-items: center; gap: 6px; padding: 2px 4px; }
+.recipe:nth-child(odd) { background: var(--gauge_empty); }
+.recipe .name { flex: none; }
+.recipe .need { flex: 1; color: var(--text_sub); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipe .need .lack { color: var(--warn); }
+.recipes::-webkit-scrollbar { width: 6px; }
+.recipes::-webkit-scrollbar-thumb { background: var(--border); }
+
 /* 창밖 날씨 한 줄 */
 .weather { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--text_sub); font-size: 11px; }
 .weather #wLine { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
