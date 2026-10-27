@@ -704,8 +704,8 @@ function toggleFocus() {
   state.focus = !state.focus;
   if (state.focus) {
     fishing.fish = 0; fishing.trash = 0;
-    if (house.code) leaveHouseVisit();   // 집중할 땐 친구네 집에서 돌아온다
-    toast('집중 모드 시작! 말랑이는 연못에서 낚시하며 기다릴게요');
+    // 친구네 집에 가 있으면 돌아오지 않고 그 집 구석에서 집중한다
+    toast(house.code ? '집중 모드 시작! 친구네 집 구석에서 조용히 집중할게요' : '집중 모드 시작! 말랑이는 연못에서 낚시하며 기다릴게요');
   } else {
     const got = [fishing.fish && `물고기 ${fishing.fish}마리`, fishing.trash && `쓰레기 ${fishing.trash}개`].filter(Boolean);
     toast(got.length ? `집중 모드 끝! 그동안 ${got.join(', ')}를 낚았어요` : '집중 모드 끝! 수고했어요');
@@ -1506,7 +1506,7 @@ function updateFishing(dt) {
   if (fishing.id) stepAngler(fishing, fisher(), dt);
 
   // 친구도 집중 중이면 놀러 온 친구네 말랑이가 맞은편에서 같이
-  const ok = (x) => x && !x.v.inside && !x.pet.sleeping && (friendStatus.get(x.code) || {}).focus;
+  const ok = (x) => x && !x.visiting && !x.v.inside && !x.pet.sleeping && (friendStatus.get(x.code) || {}).focus;
   if (buddyFishing.id && !ok(buddyVis())) stopAngler(buddyFishing);
   if (!buddyFishing.id && fishing.id) {
     const vis = visitors.find(ok);
@@ -2347,22 +2347,26 @@ function drawBlanket(c) {
 // 우리 집: 내 말랑이들 + 놀러 온 친구네 말랑이
 function drawRoom(t, dt) {
   const guests = visitors.filter((x) => x.v.inside);
+  for (const vis of guests) vis.pet.focusing = !!(friendStatus.get(vis.code) || {}).focus;   // 집중 중인 손님은 구석에서
   drawRoomScene(roomCtx, [...state.pets, ...guests.map((x) => x.pet)], roomViews, t, dt, weather.kind, homeSky);
   // 친구네 말랑이가 놀러 와 있으면 집 안에서도 쪽지를 말풍선으로 (친구 쪽지 → 손님, 내 쪽지 → 우리 말랑이)
   if (!guests.length) return;
-  for (const vis of guests) drawRoomChat(roomCtx, roomViews.get(vis.pet.id), vis.chat);
+  for (const vis of guests) drawRoomChat(roomCtx, roomViews.get(vis.pet.id), vis.chat, vis.pet.focusing);
   const me = focusPet() || state.pets.find((p) => stageOf(p) !== 'egg');
   if (me) drawRoomChat(roomCtx, roomViews.get(me.id), myChat);
 }
 
-// 집 창은 작아서 말풍선은 두 개까지만 쌓는다
-function drawRoomChat(c, rv, list) {
-  if (rv && rv.geo && list.length) drawChat(c, list, rv.geo.cx, rv.geo.top, 2);
+// 집 창은 작아서 말풍선은 두 개까지만 쌓는다 (집중 중이면 '집중 중' 위에 하나만)
+function drawRoomChat(c, rv, list, focusing = false) {
+  if (!rv || !rv.geo) return;
+  let top = rv.geo.top;
+  if (focusing) top = drawSpeech(c, '집중 중', rv.geo.cx, top, 'focus');
+  if (list.length) drawChat(c, list, rv.geo.cx, top, focusing ? 1 : 2);
 }
 
 function drawRoomScene(c, pets, rviews, t, dt, kind, sky) {
   const light = drawRoomBg(c, t, dt, kind, sky);
-  let slot = 0;
+  let slot = 0, corner = 0;
   const sleepers = [];
   for (const p of pets) {
     const rv = roomViewOf(p, rviews);
@@ -2381,6 +2385,13 @@ function drawRoomScene(c, pets, rviews, t, dt, kind, sky) {
       rv.x = 230 + (slot % 3) * 15 + (slot >= 3 ? 7 : 0);
       slot++;
       rv.y = ground; rv.vx = 0; rv.vy = 0;
+    } else if (p.focusing) {
+      // 집중하는 손님은 방 구석으로 슬금슬금 가서 자리 잡고, 가끔 끄덕끄덕
+      const spot = 22 + corner++ * 16;
+      rv.x += clamp(spot - rv.x, -50 * dt, 50 * dt);
+      rv.y = ground; rv.vx = 0; rv.vy = 0;
+      rv.face = -1;
+      if (Math.abs(spot - rv.x) < 1 && (rv.hopT -= dt) <= 0) { rv.hopT = rand(2, 4); rv.sv += 1.2; }
     } else {
       rv.vy += 900 * dt;
       rv.x += rv.vx * dt;
@@ -3462,7 +3473,8 @@ function houseSnapshot(forCode) {
     t: 'house',
     pets: state.pets.filter((p) => stageOf(p) !== 'egg').slice(0, MAX_PETS)
       .map((p) => ({ ...looksOf(p), sleeping: !!p.sleeping })),
-    guests: guestsHere().filter((x) => x.code !== forCode).map((x) => ({ code: x.code, nick: x.nick, pet: looksOf(x.pet) })),
+    guests: guestsHere().filter((x) => x.code !== forCode)
+      .map((x) => ({ code: x.code, nick: x.nick, pet: looksOf(x.pet), focus: !!(friendStatus.get(x.code) || {}).focus })),
     kind: weather.kind,
     line: weatherText(),
   };
@@ -3484,8 +3496,10 @@ function receiveHouse(f, d) {
     if (code.length !== 8 || code === state.myCode) return [];
     const info = g.pet && typeof g.pet === 'object' ? g.pet : {};
     const old = house.others.find((x) => x.code === code);
-    if (old) { Object.assign(old.pet, visitorLooks(info)); old.nick = cleanText(g.nick, 10) || old.nick; return [old]; }
-    return [{ code, nick: cleanText(g.nick, 10) || fmtCode(code), pet: guestPet('house-g-' + code, info), chat: [] }];
+    const o = old || { code, nick: fmtCode(code), pet: guestPet('house-g-' + code, info), chat: [] };
+    Object.assign(o.pet, visitorLooks(info), { focusing: !!g.focus });
+    o.nick = cleanText(g.nick, 10) || o.nick;
+    return [o];
   });
   if (house.others.length !== before) refreshFriends();
 }
@@ -3521,6 +3535,7 @@ function updateFriendHouse(t, dt) {
     const conn = conns.get(house.code);
     if (conn && conn.open) conn.send({ t: 'house?' });
   }
+  if (house.guest) house.guest.focusing = state.focus;   // 내가 집중 중이면 내 말랑이는 친구네 집 구석에서
   const pets = [...house.pets, ...house.others.map((o) => o.pet), ...(house.guest ? [house.guest] : [])];
   drawRoomScene(fhCtx, pets, house.views, t, dt, house.kind, friendSky);
   // 친구 쪽지는 친구네 말랑이(쪽지 보낸 아이, 없으면 깨어 있는 아이)가, 내 쪽지는 손님으로 간 내 말랑이가,
@@ -3529,11 +3544,11 @@ function updateFriendHouse(t, dt) {
   ageChat(house.guestChat, dt);
   for (const o of house.others) {
     ageChat(o.chat, dt);
-    drawRoomChat(fhCtx, house.views.get(o.pet.id), o.chat);
+    drawRoomChat(fhCtx, house.views.get(o.pet.id), o.chat, o.pet.focusing);
   }
   const tp = house.pets.find((p) => p.name === house.talker && !p.sleeping) || house.pets.find((p) => !p.sleeping) || house.pets[0];
   if (tp) drawRoomChat(fhCtx, house.views.get(tp.id), house.chat);
-  if (house.guest) drawRoomChat(fhCtx, house.views.get(house.guest.id), house.guestChat);
+  if (house.guest) drawRoomChat(fhCtx, house.views.get(house.guest.id), house.guestChat, house.guest.focusing);
   if ($('fhLine').textContent !== house.line) $('fhLine').textContent = house.line;
   placeFriendHouse();
 }
