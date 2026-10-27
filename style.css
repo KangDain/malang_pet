@@ -98,7 +98,7 @@ canvas { image-rendering: pixelated; }
 .ico { display: block; }
 
 /* 말랑이네 집 창 */
-#home, #fHouse { position: fixed; width: 296px; padding: 0 10px 10px; animation: pop .12s steps(2); }
+#home { position: fixed; width: 296px; padding: 0 10px 10px; animation: pop .12s steps(2); }
 .titlebar {
   display: flex; align-items: center; gap: 6px;
   margin: 0 -10px 10px; padding: 6px 10px;
@@ -109,7 +109,15 @@ canvas { image-rendering: pixelated; }
 .titlebar .name { font-weight: bold; }
 .titlebar .sub { color: var(--text_sub); }
 .titlebar .link { cursor: pointer; }
-#room, #fhRoom {
+.titlebar .link.icon { display: flex; align-items: center; padding: 2px; }
+.titlebar .link.icon.on { background: var(--gauge_empty); }
+#hQuit { flex: 0 0 64px; }
+.room-members { display: grid; gap: 3px; margin-top: 8px; }
+.room-members:empty { display: none; }
+.room-members .member { display: flex; align-items: center; gap: 6px; padding: 2px 4px; background: var(--gauge_empty); }
+.room-members .member .sub { color: var(--text_sub); font-size: 11px; }
+.room-members .member .who { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#room {
   display: block; width: 276px; height: 150px; cursor: pointer;
   box-shadow: 0 -2px 0 0 var(--border), 0 2px 0 0 var(--border), -2px 0 0 0 var(--border), 2px 0 0 0 var(--border);
 }

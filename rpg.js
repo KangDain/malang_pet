@@ -5,8 +5,8 @@
 //
 // 말랑이를 모험에 보내면 바탕화면에서 빠져(state.rpg.away) 30초마다 한 번씩 싸운다.
 // 앱이 꺼져 있던 동안의 싸움도 켤 때 한꺼번에 계산한다. 모아 온 재료로 요리하면 배도 차고 버프가 붙는다.
-// 친구와 같은 집에 모여 있으면 '같이 가자고 하기'로 파티(최대 5명)를 꾸린다. 파티장은 그 집 주인 —
-// 손님끼리는 직접 이어져 있지 않아서 집주인이 파티원 소식을 모아 다시 나눠 준다.
+// 친구들과 단톡방에 모여 있으면 '같이 가자고 하기'로 파티(최대 5명)를 꾸린다. 파티장은 방장 —
+// 방원끼리는 직접 이어져 있지 않을 수 있어서 방장이 파티원 소식을 모아 다시 나눠 준다.
 
 // ---------- 그림 ----------
 Object.assign(SPR, {
@@ -144,7 +144,7 @@ function cannotGo(p) {
 }
 
 // ---------- 파티 ----------
-// 파티장(집주인)은 파티원 소식을 모아 두고(hostRoster) 5초마다 모두에게 나눠 준다(proster).
+// 파티장(방장)은 파티원 소식을 모아 두고(hostRoster) 5초마다 모두에게 나눠 준다(proster).
 // 파티원은 받은 명단(memberRoster)으로 옆에서 같이 싸우는 친구들을 그린다.
 const hostRoster = new Map();   // 친구 코드 → { code, nick, looks, lv, hpPct, at }
 let memberRoster = null;        // { id, list: [{ code, nick, looks, lv, hpPct }], at }
@@ -152,7 +152,6 @@ const invites = new Map();      // 파티장 코드 → { id, zone, n, at }
 const MATE_FRESH = 75000;   // 파티원 소식(30초마다)이 이만큼 끊기면 혼자 싸운다
 
 const partyId = () => Math.random().toString(36).slice(2, 10);
-const sendTo = (code, msg) => { const c = conns.get(code); if (c && c.open) c.send(msg); };
 const amHost = () => !!(R.adv && R.adv.party && R.adv.party.host === state.myCode);
 
 function myEntry() {
@@ -179,28 +178,27 @@ function broadcastRoster() {
   const me = R.adv && R.adv.party && R.adv.party.id === R.host.id ? myEntry() : null;
   if (me) list.unshift(me);
   const msg = { t: 'proster', id: R.host.id, zone: R.host.zone, list };
-  const to = new Set([...hostRoster.keys(), ...guestsHere().map((x) => x.code)]);
+  const to = new Set([...hostRoster.keys(), ...(amRoomHost() ? roomOthers().map((m) => m.code) : [])]);
   for (const code of to) sendTo(code, msg);
 }
 
-// 우리 집에 모인 사람들에게 파티를 연다 (이미 열려 있으면 그대로)
+// 단톡방(내가 방장)에 모인 사람들에게 파티를 연다 (이미 열려 있으면 그대로)
 function openParty(zone) {
   if (!R.host) { R.host = { id: partyId(), zone }; hostRoster.clear(); }
   invites.set(state.myCode, { id: R.host.id, zone: R.host.zone, n: 1 + hostRoster.size, at: Date.now() });
-  for (const x of guestsHere()) sendTo(x.code, { t: 'pinv', id: R.host.id, zone: R.host.zone, n: 1 + hostRoster.size });
+  for (const m of roomOthers()) sendTo(m.code, { t: 'pinv', id: R.host.id, zone: R.host.zone, n: 1 + hostRoster.size });
   broadcastRoster();
   persist();
 }
 
 function askTogether() {
-  const room = houseRoom();
-  if (!room) return toast('친구와 같은 집에 있을 때 같이 갈 수 있어요');
-  if (room === state.myCode) {
+  if (!room) return toast('단톡방에 모인 친구들과 같이 갈 수 있어요');
+  if (amRoomHost()) {
     openParty(selZone);
     toast(`${zoneOf(selZone).name} 파티를 열었어요! 친구들이 참가하면 같이 싸워요`);
   } else {
-    sendTo(room, { t: 'pask', zone: selZone });
-    toast('집주인에게 같이 가자고 했어요');
+    sendTo(room.host, { t: 'pask', zone: selZone });
+    toast('방장에게 같이 가자고 했어요');
   }
   refreshAdv(true);
 }
@@ -233,13 +231,13 @@ function leaveParty(party) {
 function onPartyData(conn, f, d) {
   const now = Date.now();
   if (d.t === 'pask') {
-    // 우리 집 손님이 같이 가자고 했다
-    if (!guestsHere().some((x) => x.code === f.code)) return;
+    // 단톡방 사람이 같이 가자고 했다
+    if (!amRoomHost() || !roomHas(f.code)) return;
     openParty(R.host ? R.host.zone : zoneOf(String(d.zone)).id);
     toast(`${friendName(f)}님이 같이 모험 가자고 해요! (모험 창에서 참가)`);
     openAdv();
   } else if (d.t === 'pinv') {
-    if (house.code !== f.code) return;   // 놀러 가 있는 집에서 온 초대만
+    if (!room || room.host !== f.code) return;   // 지금 있는 단톡방 방장의 초대만
     invites.set(f.code, { id: String(d.id).slice(0, 12), zone: zoneOf(String(d.zone)).id, n: clamp(d.n | 0, 1, MAX_ROOM), at: now });
     if (!R.adv) { toast(`${friendName(f)}네 집에서 같이 모험 갈 사람을 찾아요!`); openAdv(); }
     refreshAdv(true);
@@ -525,10 +523,10 @@ function refreshAdv(force = false) {
   $('advGo').hidden = !!p;
   $('advTogether').hidden = !!p;
   $('advBack').hidden = !p;
-  $('advTogether').disabled = !houseRoom();
-  $('advTogether').title = houseRoom() ? '같은 집에 모인 친구들과 같이 모험 가요' : '친구와 같은 집에 있을 때 쓸 수 있어요';
+  $('advTogether').disabled = !roomOthers().length;
+  $('advTogether').title = roomOthers().length ? '단톡방에 모인 친구들과 같이 모험 가요' : '친구들과 단톡방에 모였을 때 쓸 수 있어요';
 
-  const key = `${!!p}|${state.pets.map((x) => x.id + cannotGo(x) + rpgOf(x).lv).join()}|${selZone}|${selPetId}|${[...invites.entries()].map(([k, v]) => k + v.id + v.n).join()}|${mates().map((m) => m.code + m.lv).join()}|${!!houseRoom()}`;
+  const key = `${!!p}|${state.pets.map((x) => x.id + cannotGo(x) + rpgOf(x).lv).join()}|${selZone}|${selPetId}|${[...invites.entries()].map(([k, v]) => k + v.id + v.n).join()}|${mates().map((m) => m.code + m.lv).join()}|${roomOthers().map((m) => m.code).join()}`;
   if (!force && key === advKey) return updatePartyBars();
   advKey = key;
   renderParty();
@@ -573,11 +571,10 @@ function renderParty() {
     return;
   }
   const now = Date.now();
-  const room = houseRoom();
   for (const [code, inv] of invites) {
-    // 지금 있는 집의 파티만 (오래된 초대는 버린다)
-    if (now - inv.at > 10 * 60000 || code !== room) { invites.delete(code); continue; }
-    const who = code === state.myCode ? '우리 집' : `${friendName(findFriend(code) || { code })}네 집`;
+    // 지금 있는 단톡방의 파티만 (오래된 초대는 버린다)
+    if (now - inv.at > 10 * 60000 || !room || code !== room.host) { invites.delete(code); continue; }
+    const who = code === state.myCode ? '내' : `${friendName(findFriend(code) || { code })}님`;
     const row = el('div', 'invite');
     row.append(icon('sword'), el('span', 'spacer', `${who} 파티 · ${zoneOf(inv.zone).name} · ${inv.n}명`),
       button('참가', () => joinParty(code), 'btn small primary', !pickedPet() || inv.n >= MAX_ROOM));

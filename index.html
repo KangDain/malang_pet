@@ -44,6 +44,8 @@
       <span class="name">말랑이네</span>
       <span id="homeCount" class="sub"></span>
       <span class="spacer"></span>
+      <button id="hLock" class="link icon"><canvas class="ico" data-icon="unlock"></canvas></button>
+      <button id="hHide" class="link icon"><canvas class="ico" data-icon="eye"></canvas></button>
       <button id="homeClose" class="link">닫기</button>
     </div>
     <canvas id="room" width="276" height="150"></canvas>
@@ -61,16 +63,12 @@
       <button class="btn" id="hTheme"></button>
     </div>
     <div class="home-actions">
-      <button class="btn" id="hLock"></button>
-      <button class="btn" id="hHide">표지 숨기기</button>
-      <button class="btn warn" id="hQuit" title="말랑이 키우기를 꺼요 (바탕화면 바로가기로 다시 켤 수 있어요)">끄기</button>
-    </div>
-    <div class="home-actions">
       <button class="btn" id="hFriends"><canvas class="ico" data-icon="letter"></canvas><span>친구 · 쪽지</span></button>
       <button class="btn" id="hFocus"><canvas class="ico" data-icon="focus"></canvas><span id="hFocusLabel">집중 모드</span></button>
     </div>
     <div class="home-actions">
       <button class="btn" id="hAdv"><canvas class="ico" data-icon="sword"></canvas><span>모험 · 요리</span></button>
+      <button class="btn warn" id="hQuit" title="말랑이 키우기를 꺼요 (바탕화면 바로가기로 다시 켤 수 있어요)">끄기</button>
     </div>
   </div>
 
@@ -142,10 +140,12 @@
     <div id="fList"></div>
     <div class="field">
       <div class="row">
-        <span id="fTo" class="spacer">대화할 친구를 골라 주세요</span>
-        <button id="fVisit" class="btn small" title="친구네 집에 놀러 가요">놀러 가기</button>
+        <span id="fTo" class="spacer">친구를 골라 단톡방에 불러 보세요</span>
+        <button id="fInvite" class="btn small" title="고른 친구를 단톡방에 불러요. 모이면 서로의 화면이 이어져요">부르기</button>
         <button id="fShake" class="btn small" title="친구 바탕화면의 말랑이를 흔들어요">흔들기</button>
       </div>
+      <!-- 단톡방: 모인 사람들 (방장은 내보내기) · 받은 초대 -->
+      <div id="fRoom" class="room-members"></div>
       <div id="fLog"></div>
       <div id="fAttach" class="row" hidden>
         <img id="fAttachImg" alt="보낼 사진">
@@ -159,18 +159,6 @@
         <button id="fSend" class="btn small primary">보내기</button>
       </div>
     </div>
-  </div>
-
-  <!-- 친구네 집에 놀러 갔을 때 -->
-  <div id="fHouse" class="ui box" hidden>
-    <div id="fhBar" class="titlebar">
-      <canvas class="ico" data-icon="twin"></canvas>
-      <span id="fhName" class="name">친구네 집</span>
-      <span class="spacer"></span>
-      <button id="fhClose" class="link">돌아오기</button>
-    </div>
-    <canvas id="fhRoom" width="276" height="150"></canvas>
-    <div class="weather"><span id="fhLine"></span></div>
   </div>
 
   <div id="modal" hidden>
