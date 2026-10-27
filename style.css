@@ -74,6 +74,8 @@ canvas { image-rendering: pixelated; }
   display: flex; flex-direction: column; align-items: center; gap: 12px;
   pointer-events: none;
 }
+/* 집중 중엔 화면 가운데를 가리지 않게 연못 쪽 구석에 */
+body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: flex-end; }
 .toast { padding: 5px 12px; white-space: nowrap; animation: pop .12s steps(2); }
 .toast.out { visibility: hidden; }
 @keyframes pop { from { transform: translateY(6px); } to { transform: none; } }

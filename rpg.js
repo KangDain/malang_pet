@@ -235,11 +235,11 @@ function onPartyData(conn, f, d) {
     if (!amRoomHost() || !roomHas(f.code)) return;
     openParty(R.host ? R.host.zone : zoneOf(String(d.zone)).id);
     toast(`${friendName(f)}님이 같이 모험 가자고 해요! (모험 창에서 참가)`);
-    openAdv();
+    if (!state.focus) openAdv();   // 집중 중엔 창을 저절로 띄우지 않는다
   } else if (d.t === 'pinv') {
     if (!room || room.host !== f.code) return;   // 지금 있는 단톡방 방장의 초대만
     invites.set(f.code, { id: String(d.id).slice(0, 12), zone: zoneOf(String(d.zone)).id, n: clamp(d.n | 0, 1, MAX_ROOM), at: now });
-    if (!R.adv) { toast(`${friendName(f)}네 집에서 같이 모험 갈 사람을 찾아요!`); openAdv(); }
+    if (!R.adv) { toast(`${friendName(f)}님이 같이 모험 갈 사람을 찾아요! (모험 창에서 참가)`); if (!state.focus) openAdv(); }
     refreshAdv(true);
   } else if ((d.t === 'pjoin' || d.t === 'pstat') && R.host && d.id === R.host.id) {
     if (!hostRoster.has(f.code) && hostRoster.size >= MAX_ROOM - 1) return;

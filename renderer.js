@@ -695,6 +695,7 @@ function prefsChanged() {
   setIconButton($('hHide'), state.markHidden ? 'eyeOff' : 'eye', state.markHidden ? '표지 보이기' : '표지 숨기기', state.markHidden);
   $('hFocusLabel').textContent = state.focus ? '집중 끝내기' : '집중 모드';
   $('hFocus').classList.toggle('primary', state.focus);
+  document.body.classList.toggle('focusing', state.focus);   // 집중 중엔 알림 글을 구석으로
   window.malang.prefsChanged({ hidden: state.markHidden, locked: state.markLocked, dnd: state.dnd, focus: state.focus });
   persist();
 }
@@ -1003,6 +1004,15 @@ function hop(p, v) {
   let dir = Math.random() < 0.5 ? -1 : 1;
   if (v.x < 120) dir = 1;
   if (v.x > W - 120) dir = -1;
+  // 집중 중엔 다른 프로그램 위를 돌아다니지 않게 연못 쪽 구석에서만 논다
+  if (state.focus && v.x < focusLeft()) {
+    v.face = 1;
+    v.vx = rand(260, 340);
+    v.vy = -rand(300, 380);
+    v.sv -= 2;
+    v.hopT = rand(0.2, 0.35);
+    return;
+  }
   v.face = dir;
   v.vx = dir * rand(50, 150) * (playing ? 1.3 : 1);
   v.vy = -(playing ? rand(380, 520) : rand(200, 320)) * jump;
@@ -1500,6 +1510,8 @@ const fishing = makeAngler(0);   // 내 말랑이
 const buddies = [1, 2, 3, 4].map(makeAngler);
 const anglers = [fishing, ...buddies];
 const pondX = () => Math.max(320, W - 190);
+// 집중 중 말랑이들이 노는 구석 (연못과 둘레의 낚시 자리까지)
+const focusLeft = () => pondX() - 320;
 const anglerSpot = (a) => pondX() + a.side * (POND_RX * 3 + 26 + a.row * 74);
 const bobberX = (a) => pondX() + a.side * (12 + a.row * 12);
 const fisher = () => (fishing.id && state.pets.find((p) => p.id === fishing.id)) || null;
@@ -1700,6 +1712,8 @@ let lastFrame = performance.now();
 function frame(now) {
   // 한 프레임에서 오류가 나도 다음 프레임은 그린다 (전에는 루프가 멈춰 앱이 굳었다)
   requestAnimationFrame(frame);
+  // 집중 중엔 초당 30번만 그려서 다른 프로그램이 쓸 CPU·GPU를 덜 뺏는다
+  if (state.focus && now - lastFrame < 30) return;
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
   lastFrame = now;
   const t = now / 1000;
@@ -1821,6 +1835,16 @@ function overUi(x, y) {
 
 function updateHover() {
   const pt = { x: mouse.x, y: mouse.y };
+  // 집중 중엔 말랑이·공·응가가 클릭을 가로채지 않는다 (밑에 있는 프로그램이 그대로 눌리고,
+  // 말랑이 창이 앞으로 나와 키보드 입력을 뺏지도 않게). 집 표지와 열어 둔 창만 누를 수 있다
+  if (state.focus && !(mouse.down && mouse.down.dragging)) {
+    hoverId = null;
+    hoverVisitor = null;
+    const onMark = overHomeMark(pt);
+    setInteractive(!!(mouse.down || uiDrag || onMark || overUi(pt.x, pt.y)));
+    canvas.style.cursor = onMark ? 'pointer' : 'default';
+    return;
+  }
   const p = petAt(pt);
   hoverId = p ? p.id : null;
   const vis = p ? null : visitorAt(pt);
@@ -2943,7 +2967,7 @@ function handleEvents() {
 // 방해 금지 모드로 숨은 동안(게임·영상 중)은 알림도 쉿.
 let quiet = false;
 function notify(body) {
-  if (!document.hidden || quiet) return;
+  if (!document.hidden || quiet || state.focus) return;   // 집중 중엔 윈도우 알림도 띄우지 않는다
   try { new Notification('말랑이 키우기', { body }); } catch { /* 알림을 못 띄워도 게임은 계속된다 */ }
 }
 
