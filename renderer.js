@@ -547,6 +547,7 @@ function drawCloud(c, cx, top, icon, t) {
 // 원하는 건 네모 말풍선으로 말한다
 // 말풍선 폭을 넘으면 여러 줄로 (띄어쓰기에서 먼저 끊고, 긴 단어는 글자 단위로)
 const SPEECH_MAX_W = 132;
+const widthOf = (c) => (c === ctx ? W : c.canvas.width);   // 바탕화면은 CSS 폭, 집 창은 캔버스 폭
 function wrapText(c, text, maxW) {
   const lines = [];
   let line = '';
@@ -571,7 +572,7 @@ function drawSpeech(c, text, cx, top, icon = null, tail = true) {
   const lines = wrapText(c, text, SPEECH_MAX_W - iw);
   const textW = Math.max(...lines.map((l) => Math.ceil(c.measureText(l).width)));
   const wc = Math.ceil((textW + 12 + iw) / px), hc = 2 + Math.round((lines.length * lineH) / px);
-  const ox = snap(clamp(cx - 12, 8, W - wc * px - 8), px), oy = snap(top - (hc + 4) * px, px);
+  const ox = snap(clamp(cx - 12, 8, widthOf(c) - wc * px - 8), px), oy = snap(top - (hc + 4) * px, px);
   const tx = clamp(Math.round((cx - ox) / px), 2, wc - 3);
   const cells = new Cells();
   for (let y = 0; y < hc; y++) {
@@ -599,9 +600,9 @@ function pushChat(list, text, thumb = null) {
 function ageChat(list, dt) {
   for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
 }
-function drawChat(c, list, cx, top) {
+function drawChat(c, list, cx, top, max = CHAT_MAX) {
   let y = top;
-  for (let i = list.length - 1, k = 0; i >= 0; i--, k++) {
+  for (let i = list.length - 1, k = 0; i >= 0 && k < max; i--, k++) {
     const m = list[i];
     c.globalAlpha = CHAT_ALPHA[k] * Math.min(1, m.t);   // 마지막 1초 동안 스르르
     if (m.thumb) y = drawPhotoCard(c, m.thumb, cx, y);
@@ -614,7 +615,7 @@ function drawChat(c, list, cx, top) {
 function drawPhotoCard(c, thumb, cx, top) {
   const s = thumb.width, pad = 3;
   const w = s + pad * 2, h = s + pad * 2 + 6;
-  const x = Math.round(clamp(cx - w / 2, 8, W - w - 8)), y = Math.round(top - h - 8);
+  const x = Math.round(clamp(cx - w / 2, 8, widthOf(c) - w - 8)), y = Math.round(top - h - 8);
   c.fillStyle = T.outline;
   c.fillRect(x - 2, y - 2, w + 4, h + 4);
   c.fillStyle = '#FFFFFF';
@@ -703,6 +704,7 @@ function toggleFocus() {
   state.focus = !state.focus;
   if (state.focus) {
     fishing.fish = 0; fishing.trash = 0;
+    if (house.code) leaveHouseVisit();   // 집중할 땐 친구네 집에서 돌아온다
     toast('집중 모드 시작! 말랑이는 연못에서 낚시하며 기다릴게요');
   } else {
     const got = [fishing.fish && `물고기 ${fishing.fish}마리`, fishing.trash && `쓰레기 ${fishing.trash}개`].filter(Boolean);
@@ -717,6 +719,7 @@ function toggleFocus() {
   }
   prefsChanged();
   broadcastStatus();
+  refreshFriends();
 }
 
 // 집중 구름을 띄울 말랑이: 고른 말랑이가 깨어 있으면 그 아이, 아니면 깨어 있는 첫째
@@ -2343,8 +2346,18 @@ function drawBlanket(c) {
 
 // 우리 집: 내 말랑이들 + 놀러 온 친구네 말랑이
 function drawRoom(t, dt) {
-  const guests = visitors.filter((x) => x.v.inside).map((x) => x.pet);
-  drawRoomScene(roomCtx, [...state.pets, ...guests], roomViews, t, dt, weather.kind, homeSky);
+  const guests = visitors.filter((x) => x.v.inside);
+  drawRoomScene(roomCtx, [...state.pets, ...guests.map((x) => x.pet)], roomViews, t, dt, weather.kind, homeSky);
+  // 친구네 말랑이가 놀러 와 있으면 집 안에서도 쪽지를 말풍선으로 (친구 쪽지 → 손님, 내 쪽지 → 우리 말랑이)
+  if (!guests.length) return;
+  for (const vis of guests) drawRoomChat(roomCtx, roomViews.get(vis.pet.id), vis.chat);
+  const me = focusPet() || state.pets.find((p) => stageOf(p) !== 'egg');
+  if (me) drawRoomChat(roomCtx, roomViews.get(me.id), myChat);
+}
+
+// 집 창은 작아서 말풍선은 두 개까지만 쌓는다
+function drawRoomChat(c, rv, list) {
+  if (rv && rv.geo && list.length) drawChat(c, list, rv.geo.cx, rv.geo.top, 2);
 }
 
 function drawRoomScene(c, pets, rviews, t, dt, kind, sky) {
@@ -2935,8 +2948,12 @@ function startNet() {
     setTimeout(() => { if (peer === pr && !pr.destroyed && pr.disconnected) pr.reconnect(); }, 5000);
   });
   pr.on('error', (err) => {
-    if (err.type === 'peer-unavailable') return;   // 친구가 꺼져 있을 뿐
+    // 친구가 꺼져 있거나 연결 하나가 맺어지다 실패한 것 — 그 연결만 15초 뒤 정리되고 30초마다 다시 건다.
+    // (전에는 이것까지 통째로 껐다 켜서, 온라인으로 보여도 친구와 계속 끊어졌다)
+    if (['peer-unavailable', 'webrtc', 'negotiation-failed', 'connection-closed'].includes(err.type)) return;
     if (peer !== pr) return;
+    // 서버와 잠깐 끊긴 건 'disconnected'에서 다시 붙는다
+    if ((err.type === 'network' || err.type === 'disconnected') && !pr.destroyed) return;
     // 인터넷이 끊겼거나, 방금 껐다 켜서 서버가 예전 연결을 아직 쥐고 있을 때 — 잠시 뒤 다시
     peer = null;
     pr.destroy();
@@ -2976,9 +2993,18 @@ function setupConn(conn) {
   conn.on('error', () => dropConn(conn));
 }
 
+// 둘이 동시에 연결을 걸면 연결이 두 개 생긴다. 서로 다른 쪽을 대표로 골라도
+// 받는 건 인사를 마친 어느 연결로든 받고, 대표가 끊기면 남은 쪽으로 이어 간다.
+const greeted = new Set();
 function dropConn(conn) {
-  for (const [code, c] of conns) if (c === conn) conns.delete(code);
+  greeted.delete(conn);
   for (const [code, c] of pending) if (c === conn) pending.delete(code);
+  const code = conn.code;
+  if (code && conns.get(code) === conn) {
+    conns.delete(code);
+    const alt = [...greeted].find((c) => c.code === code && c.open);
+    if (alt) conns.set(code, alt);
+  }
   refreshFriends();
 }
 
@@ -3000,15 +3026,17 @@ function onData(conn, d) {
     friendStatus.set(code, { focus: !!d.focus, sleeping: !!d.sleeping });
     lastSeen.set(code, Date.now());
     pending.delete(code);
+    conn.code = code;
+    greeted.add(conn);
     conns.set(code, conn);
     if (d.pet && typeof d.pet === 'object') visitorFor(f, d.pet).pet.sleeping = !!d.sleeping;
     persist();
     refreshFriends();
     return;
   }
-  const entry = [...conns].find(([, c]) => c === conn);
-  if (!entry) return;   // 인사 전에 온 건 무시
-  const f = findFriend(entry[0]);
+  // 대표 연결이 아니어도 인사를 마친 연결이면 받는다 (전에는 여기서 쪽지·핑이 버려져 45초마다 끊겼다)
+  if (!greeted.has(conn)) return;   // 인사 전에 온 건 무시
+  const f = findFriend(conn.code);
   if (!f) return;
   lastSeen.set(f.code, Date.now());
   if (d.t === 'bye') { conn.close(); dropConn(conn); return; }   // 친구가 앱을 껐다
@@ -3051,7 +3079,9 @@ function takePhoto(conn, id) {
   return data.length <= PHOTO_MAX + 1000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(data) ? data : null;
 }
 
+let noteSeq = 0;   // 기록이 60개로 꽉 차면 길이가 그대로라, 새 줄이 생겼는지는 번호로 본다
 function logNote(entry) {
+  noteSeq++;
   noteLog.push(entry);
   if (noteLog.length > 60) noteLog.shift();
 }
@@ -3086,9 +3116,12 @@ function receiveNote(f, d, img) {
   if (!text && !img) return;
   const nick = friendName(f);
   logNote({ code: f.code, dir: 'in', text, img });
-  const vis = visitorFor(f, d.pet && typeof d.pet === 'object' ? d.pet : {});
+  const info = d.pet && typeof d.pet === 'object' ? d.pet : {};
+  const vis = visitorFor(f, info);
   vis.v.vy = -380; vis.v.sv -= 2;
-  pushChat(vis.chat, text, img ? makeThumb(img) : null);
+  const thumb = img ? makeThumb(img) : null;
+  pushChat(vis.chat, text, thumb);
+  if (house.code === f.code) { pushChat(house.chat, text, thumb); house.talker = visitorLooks(info).name; }
   if (!state.focus) notify(`${nick}: ${text || '사진을 보냈어요'}`);
   refreshFriends();
 }
@@ -3137,6 +3170,7 @@ function receiveShake(f) {
 }
 
 function sendShake() {
+  if (state.focus) return toast('집중 중에는 흔들 수 없어요. 쪽지는 보낼 수 있어요');
   if (!fTarget) return toast('흔들 친구를 골라 주세요');
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요');
@@ -3240,6 +3274,7 @@ function sendNote() {
   clearAttach();
   // 내 화면에서도 내 말랑이가 보낸 말을 말풍선으로 말한다
   pushChat(myChat, text, photo ? photo.thumb : null);
+  if (house.code === fTarget) pushChat(house.guestChat, text, photo ? photo.thumb : null);
   if (p) {
     const v = viewOf(p);
     v.vy = -380; v.sv -= 2; v.emote = null; v.speech = null;
@@ -3337,9 +3372,10 @@ const fHouse = $('fHouse');
 const fhCanvas = $('fhRoom');
 const fhCtx = fhCanvas.getContext('2d');
 const friendSky = makeSky();
-const house = { code: null, pets: [], guest: null, views: new Map(), kind: 'clear', line: '', pos: null, askT: 0 };
+const house = { code: null, pets: [], guest: null, views: new Map(), kind: 'clear', line: '', pos: null, askT: 0, chat: [], guestChat: [], talker: '' };
 
 function visitHouse() {
+  if (state.focus) return toast('집중 중에는 놀러 갈 수 없어요. 쪽지는 보낼 수 있어요');
   if (!fTarget) return toast('놀러 갈 친구를 골라 주세요');
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요');
@@ -3350,6 +3386,9 @@ function visitHouse() {
   house.pets = [];
   house.views.clear();
   house.line = '친구네 집으로 가는 중..';
+  house.chat.length = 0;
+  house.guestChat.length = 0;
+  house.talker = '';
   house.guest = { id: 'house-me', visitor: true, ...visitorLooks(info), hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
   conn.send({ t: 'visit' });
   $('fhName').textContent = `${friendName(findFriend(fTarget))}네 집`;
@@ -3418,6 +3457,12 @@ function updateFriendHouse(t, dt) {
   }
   const pets = house.guest ? [...house.pets, house.guest] : house.pets;
   drawRoomScene(fhCtx, pets, house.views, t, dt, house.kind, friendSky);
+  // 친구 쪽지는 친구네 말랑이(쪽지 보낸 아이, 없으면 깨어 있는 아이)가, 내 쪽지는 손님으로 간 내 말랑이가 말한다
+  ageChat(house.chat, dt);
+  ageChat(house.guestChat, dt);
+  const tp = house.pets.find((p) => p.name === house.talker && !p.sleeping) || house.pets.find((p) => !p.sleeping) || house.pets[0];
+  if (tp) drawRoomChat(fhCtx, house.views.get(tp.id), house.chat);
+  if (house.guest) drawRoomChat(fhCtx, house.views.get(house.guest.id), house.guestChat);
   if ($('fhLine').textContent !== house.line) $('fhLine').textContent = house.line;
   placeFriendHouse();
 }
@@ -3494,8 +3539,8 @@ function refreshFriends() {
   }
   const f = fTarget && findFriend(fTarget);
   $('fTo').textContent = f ? `${friendName(f)}와의 대화` : '대화할 친구를 골라 주세요';
-  $('fShake').disabled = !f || !conns.has(f.code);
-  $('fVisit').disabled = !f || !conns.has(f.code);
+  $('fShake').disabled = !f || !conns.has(f.code) || state.focus;
+  $('fVisit').disabled = !f || !conns.has(f.code) || state.focus;
   $('fVisit').textContent = house.code && house.code === fTarget ? '집에 있어요' : '놀러 가기';
   renderChat();
 }
@@ -3503,7 +3548,7 @@ function refreshFriends() {
 // 대화창: 내가 보낸 건 오른쪽, 친구가 보낸 건 왼쪽 말풍선
 function renderChat() {
   const items = noteLog.filter((n) => !fTarget || n.code === fTarget);
-  const key = `${fTarget}|${noteLog.length}|${items.length && noteLog[noteLog.length - 1] === items[items.length - 1]}`;
+  const key = `${fTarget}|${noteSeq}`;
   if (key === chatKey) return;
   chatKey = key;
   const box = $('fLog');
@@ -3565,8 +3610,7 @@ function removeFriend(code) {
   state.friends = state.friends.filter((f) => f.code !== code);
   // 지운 친구가 다시 연결해 와도 받지 않는다 (코드를 다시 추가하면 풀린다)
   if (!state.blocked.includes(code)) state.blocked.push(code);
-  const c = conns.get(code);
-  if (c) c.close();
+  for (const c of greeted) if (c.code === code) c.close();
   conns.delete(code);
   if (fTarget === code) fTarget = null;
   persist();
