@@ -84,8 +84,9 @@
       <button id="advTab" class="link">요리</button>
       <button id="advClose" class="link">닫기</button>
     </div>
+    <!-- 모험 탭에선 싸우는 모습, 요리 탭에선 주방에서 요리하는 모습 -->
+    <canvas id="advScene" width="276" height="100"></canvas>
     <div id="advMain">
-      <canvas id="advScene" width="276" height="100"></canvas>
       <div id="advInfo" class="adv-info"></div>
       <div id="advParty" class="adv-party"></div>
       <div id="advReady">
@@ -105,7 +106,7 @@
       </div>
     </div>
     <div id="advKitchen" hidden>
-      <div class="field first"><span>가방</span><div id="advBag" class="bag"></div></div>
+      <div class="field"><span>가방</span><div id="advBag" class="bag"></div></div>
       <div class="field"><span>요리하기</span><div id="advRecipes" class="recipes"></div></div>
       <div class="field"><span>만든 요리 (모험 중이면 도시락으로)</span><div id="advDishes" class="recipes"></div></div>
     </div>

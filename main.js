@@ -223,6 +223,9 @@ function createWindow() {
     maximizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
+    // 도구 창(WS_EX_TOOLWINDOW)으로 만든다. 화면 전체를 덮는 투명 창이라, 말랑이를 누르는 순간
+    // 크롬 같은 프로그램이 '가려졌다'고 보고 화면 그리기를 멈췄다. 도구 창은 그 계산에서 빠진다
+    ...(process.platform === 'win32' ? { type: 'toolbar' } : {}),
     title: '말랑이 키우기',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

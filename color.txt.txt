@@ -1,9 +1,9 @@
 THEMES = {
     "light": {
-        "bg": "#F5F0E1", "floor": "#D4B38C", "floor_grain": "#BF9C74",
-        "border": "#9A7352", "text": "#4E4A36", "text_sub": "#8F8A6E",
-        "pet": "#6FA36A", "leaf": "#5E8C5A", "pot": "#9A7352",
-        "gauge_empty": "#E5E0CC", "hunger": "#E9C27F", "fun": "#A9CF7E",
+        "bg": "#ECDFC8", "floor": "#CDA87E", "floor_grain": "#B78F68",
+        "border": "#94704E", "text": "#4E4434", "text_sub": "#8A7B61",
+        "pet": "#6FA36A", "leaf": "#5E8C5A", "pot": "#94704E",
+        "gauge_empty": "#DDCDB0", "hunger": "#E9C27F", "fun": "#A9CF7E",
         "clean": "#9ED2C6", "warn": "#E39A7A",
     },
     "dark": {

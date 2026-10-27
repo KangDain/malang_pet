@@ -3,10 +3,10 @@
 // ===================== 색상 (color.txt) =====================
 const THEMES = {
   light: {
-    bg: '#F5F0E1', floor: '#D4B38C', floor_grain: '#BF9C74',
-    border: '#9A7352', text: '#4E4A36', text_sub: '#8F8A6E',
-    pet: '#6FA36A', leaf: '#5E8C5A', pot: '#9A7352',
-    gauge_empty: '#E5E0CC', hunger: '#E9C27F', fun: '#A9CF7E',
+    bg: '#ECDFC8', floor: '#CDA87E', floor_grain: '#B78F68',
+    border: '#94704E', text: '#4E4434', text_sub: '#8A7B61',
+    pet: '#6FA36A', leaf: '#5E8C5A', pot: '#94704E',
+    gauge_empty: '#DDCDB0', hunger: '#E9C27F', fun: '#A9CF7E',
     clean: '#9ED2C6', warn: '#E39A7A',
   },
   dark: {
@@ -23,7 +23,7 @@ const STAT_COLOR = { hunger: 'hunger', happy: 'fun', clean: 'clean', energy: 'le
 // ===================== 설정 =====================
 const HOUR = 3600 * 1000;
 const EGG_MS = 30 * 1000;     // 알에서 깨어나기까지
-const MAX_PETS = 6;
+const MAX_PETS = 2;
 const GRAVITY = 1800;
 const PX = 3;                 // 말랑이 도트 한 칸 = 화면 3px
 
@@ -1476,16 +1476,19 @@ const CATCHES = [
   { sprite: 'boot', fish: false, w: 1.5 },
   { sprite: 'can', fish: false, w: 1.5 },
 ];
+// 자리 i: 짝수는 왼쪽, 홀수는 오른쪽에 서고, 둘째 줄부터는 한 칸씩 뒤로 물러선다
 // side: 연못 어느 쪽에 서는지 (-1 왼쪽에서 오른쪽을 봄, +1 오른쪽에서 왼쪽을 봄)
-const makeAngler = (side) => ({ id: null, side, phase: 'off', t: 0, item: null, fish: 0, trash: 0 });
-const fishing = makeAngler(-1);       // 내 말랑이
-const buddyFishing = makeAngler(1);   // 같이 집중 중인 친구네 말랑이
-const pondX = () => Math.max(160, W - 100);
-const anglerSpot = (a) => pondX() + a.side * (POND_RX * 3 + 26);
-const bobberX = (a) => pondX() + a.side * 12;
+const makeAngler = (i) => ({ id: null, side: i % 2 ? 1 : -1, row: Math.floor(i / 2), phase: 'off', t: 0, item: null, fish: 0, trash: 0 });
+const fishing = makeAngler(0);   // 내 말랑이
+// 같이 집중 중인 친구네 말랑이들 (그룹 대화 최대 5명 → 친구 4명)
+const buddies = [1, 2, 3, 4].map(makeAngler);
+const anglers = [fishing, ...buddies];
+const pondX = () => Math.max(320, W - 190);
+const anglerSpot = (a) => pondX() + a.side * (POND_RX * 3 + 26 + a.row * 74);
+const bobberX = (a) => pondX() + a.side * (12 + a.row * 12);
 const fisher = () => (fishing.id && state.pets.find((p) => p.id === fishing.id)) || null;
-const buddyVis = () => (buddyFishing.id && visitors.find((x) => x.pet.id === buddyFishing.id)) || null;
-const anglerPet = (a) => (a === fishing ? fisher() : (buddyVis() || {}).pet || null);
+const buddyVis = (a) => (a.id && visitors.find((x) => x.pet.id === a.id)) || null;
+const anglerPet = (a) => (a === fishing ? fisher() : (buddyVis(a) || {}).pet || null);
 
 function pickCatch() {
   let r = Math.random() * CATCHES.reduce((s, c) => s + c.w, 0);
@@ -1500,31 +1503,35 @@ function stopAngler(a) {
   a.phase = 'off';
   a.item = null;
 }
-const stopFishing = () => { stopAngler(fishing); stopAngler(buddyFishing); };
+const stopFishing = () => anglers.forEach(stopAngler);
 
 function updateFishing(dt) {
-  if (!state.focus) { if (fishing.id || buddyFishing.id) stopFishing(); return; }
-  // 낚시꾼이 잠들면 다른 깨어 있는 말랑이가 이어서 한다
+  if (!state.focus) { if (anglers.some((a) => a.id)) stopFishing(); return; }
+  // 낚시꾼이 잠들거나 모험을 떠나면 다른 깨어 있는 말랑이가 이어서 한다 (아무도 없으면 쉰다)
   const p = fisher();
   if (!p || p.sleeping || stageOf(p) === 'egg' || viewOf(p).inside) {
     if (p) stopAngler(fishing);
     const next = [selected(), ...state.pets].find((x) => x && stageOf(x) !== 'egg' && !x.sleeping && !viewOf(x).inside);
-    if (next) { fishing.id = next.id; fishing.phase = 'walk'; }
+    fishing.id = next ? next.id : null;
+    fishing.phase = next ? 'walk' : 'off';
+    fishing.item = null;
   }
   if (fishing.id) stepAngler(fishing, fisher(), dt);
 
-  // 친구도 집중 중이면 놀러 온 친구네 말랑이가 맞은편에서 같이
+  // 친구도 집중 중이면 친구네 말랑이들이 연못 둘레에 빙 둘러 같이
   const ok = (x) => x && !x.visiting && !x.v.inside && !x.pet.sleeping && (friendStatus.get(x.code) || {}).focus;
-  if (buddyFishing.id && !ok(buddyVis())) stopAngler(buddyFishing);
-  if (!buddyFishing.id && fishing.id) {
-    const vis = visitors.find(ok);
-    if (vis) {
-      buddyFishing.id = vis.pet.id;
-      buddyFishing.phase = 'walk';
+  for (const a of buddies) if (a.id && !ok(buddyVis(a))) stopAngler(a);
+  if (fishing.id) {
+    for (const vis of visitors) {
+      if (!ok(vis) || buddies.some((a) => a.id === vis.pet.id)) continue;
+      const a = buddies.find((x) => !x.id);
+      if (!a) break;
+      a.id = vis.pet.id;
+      a.phase = 'walk';
       toast(`${vis.nick}님도 집중 중! 같이 낚시해요`);
     }
   }
-  if (buddyFishing.id) stepAngler(buddyFishing, buddyVis().pet, dt);
+  for (const a of buddies) if (a.id) stepAngler(a, buddyVis(a).pet, dt);
 }
 
 function stepAngler(a, p, dt) {
@@ -1573,9 +1580,11 @@ function stepAngler(a, p, dt) {
     if (fish && !p.visitor) runHooks('caught', a.item);
     if (!p.visitor) p.happy = clamp(p.happy + (fish ? 3 : -1), 0, 100);
     emit(v.x, v.y - 40, fish ? 'heart' : 'sadDrop', { n: fish ? 2 : 1, spread: 40, up: 100 });
-    // 같이 낚시하는 친구는 박수
-    const other = anglerPet(a === fishing ? buddyFishing : fishing);
-    if (other && fish) { const ov = viewOf(other); ov.sv += 2; emit(ov.x, ov.y - 40, 'note', { n: 1, spread: 20, up: 90 }); }
+    // 같이 낚시하는 친구들은 박수
+    for (const o of anglers) {
+      const other = o !== a && anglerPet(o);
+      if (other && fish) { const ov = viewOf(other); ov.sv += 2; emit(ov.x, ov.y - 40, 'note', { n: 1, spread: 20, up: 90 }); }
+    }
   } else if (a.phase === 'show') {
     if (a.item) emit(...rodTip(v, a), a.item.fish ? 'sparkle' : 'puff', { n: 3, spread: 40, up: 80 });
     a.item = null;
@@ -1588,7 +1597,7 @@ function stepAngler(a, p, dt) {
 function rodTip(v, a) {
   const g = v.geo, dir = -a.side;
   const swing = a.phase === 'cast' ? -10 : a.phase === 'reel' || a.phase === 'show' ? -6 : 0;
-  return g ? [g.cx + dir * (g.rx + 30 + swing), g.cy - 24 + swing] : [v.x + dir * 40, v.y - 50];
+  return g ? [g.cx + dir * (g.rx + 30 + a.row * 24 + swing), g.cy - 24 - a.row * 12 + swing] : [v.x + dir * 40, v.y - 50];
 }
 
 function drawPond(c, t) {
@@ -1653,8 +1662,7 @@ function drawAngler(c, a, t) {
 
 function drawFishing(c, t) {
   if (!state.focus) return;
-  drawAngler(c, fishing, t);
-  drawAngler(c, buddyFishing, t);
+  for (const a of anglers) drawAngler(c, a, t);
 }
 
 // 어질어질한 말랑이 머리 위를 도는 별
@@ -1671,6 +1679,8 @@ function drawDizzy(c, t) {
 // ===================== 메인 루프 =====================
 let lastFrame = performance.now();
 function frame(now) {
+  // 한 프레임에서 오류가 나도 다음 프레임은 그린다 (전에는 루프가 멈춰 앱이 굳었다)
+  requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
   lastFrame = now;
   const t = now / 1000;
@@ -1775,7 +1785,6 @@ function frame(now) {
   placeFriends();
   updateHover();
   if (!modal.hidden) drawPreview(t);
-  requestAnimationFrame(frame);
 }
 
 // ===================== 클릭 통과 처리 =====================
@@ -2783,6 +2792,7 @@ function openModal(mode) {
   }
   closeCard();
   modal.hidden = false;
+  placeModal();
   mName.focus();
   mName.select();
 }
@@ -2791,6 +2801,18 @@ function closeModal() {
   modal.hidden = true;
   modalMode = null;
 }
+
+// 제목 줄을 끌어서 옮긴다 (한 번 옮기면 다음에 열 때도 그 자리)
+const sheet = modal.querySelector('.sheet');
+let modalPos = null;
+function placeModal() {
+  if (modal.hidden || !modalPos) return;
+  const w = sheet.offsetWidth, h = sheet.offsetHeight;
+  sheet.style.position = 'fixed';
+  sheet.style.left = Math.round(clamp(modalPos.x, 10, W - w - 10)) + 'px';
+  sheet.style.top = Math.round(clamp(modalPos.y, 10, H - h - 10)) + 'px';
+}
+dragBy($('mTitle'), sheet, (pos) => { modalPos = pos; placeModal(); });
 
 function confirmModal() {
   const name = mName.value.trim() || suggestName();
@@ -3147,15 +3169,24 @@ function sayBye() {
   for (const c of conns.values()) if (c.open) { try { c.send({ t: 'bye' }); } catch { /* 이미 끊김 */ } }
 }
 
-// 대화는 같은 집에 모여 있을 때만: 친구네 집에 놀러 가 있으면 그 집, 아니면 손님이 와 있는 우리 집.
-// 한 집에 여럿이 모이면 그룹 대화 — 손님끼리는 직접 이어지지 않아서 집주인이 말을 전해 준다.
-const MAX_ROOM = 5;   // 한 집에 모일 수 있는 사람 (집주인 포함)
+// 같은 집: 친구네 집에 놀러 가 있으면 그 집, 아니면 손님이 와 있는 우리 집 (모험 파티는 같은 집에서 꾸린다).
+// 한 집에 여럿이 모이면 손님끼리는 직접 이어지지 않아서 집주인이 말을 전해 준다.
+const MAX_ROOM = 5;   // 한 집에 모일 수 있는 사람 (집주인 포함) · 바탕화면 대화도 최대 5명
 const guestsHere = () => visitors.filter((x) => x.visiting && conns.has(x.code));
-function chatRoom() {
+function houseRoom() {
   if (house.code) return house.code;
   return guestsHere().length ? state.myCode : null;
 }
-const roomSize = (room) => (room === state.myCode ? guestsHere().length + 1 : house.others.length + 2);
+// 대화는 화면을 이어 놓은 느낌으로: 친구네 집에 가 있지 않으면 연결된 친구들과 바탕화면에서 바로.
+// 내가 한 말은 내 말랑이가, 친구가 한 말은 내 화면에 놀러 와 있는 친구네 말랑이가 말풍선으로 말한다.
+// 우리 집 손님 → 화면에 와 있는 친구 → 나머지 순으로 4명까지
+const chatFriends = () => [...new Set([...guestsHere().map((x) => x.code), ...visitors.map((x) => x.code), ...conns.keys()])]
+  .filter((code) => conns.has(code)).slice(0, MAX_ROOM - 1);
+function chatRoom() {
+  if (house.code) return house.code;
+  return chatFriends().length ? state.myCode : null;
+}
+const roomSize = (room) => (room === state.myCode ? chatFriends().length + 1 : house.others.length + 2);
 
 // 집주인 → 손님, 손님 → 집주인 쪽지
 function receiveNote(f, d, img) {
@@ -3177,7 +3208,16 @@ function receiveNote(f, d, img) {
       const c = x.code !== f.code && conns.get(x.code);
       if (c && c.open) c.send({ t: 'room', from: f.code, nick, text, photo: img ? sendPhoto(c, img) : null });
     }
-  } else return;   // 같은 집에 있지 않은 친구의 쪽지는 받지 않는다
+  } else {
+    // 바탕화면 대화: 내 화면에 와 있는 친구네 말랑이가 말풍선으로 (아직 없으면 톡 떨어져서)
+    if (!chatFriends().includes(f.code)) return;
+    logNote({ room: state.myCode, code: f.code, nick, dir: 'in', text, img });
+    const vis = d.pet && typeof d.pet === 'object' ? visitorFor(f, d.pet) : visitors.find((x) => x.code === f.code);
+    if (vis) {
+      pushChat(vis.chat, text, thumb);
+      vis.v.sv += 2;
+    }
+  }
   if (!state.focus) notify(`${nick}: ${text || '사진을 보냈어요'}`);
   refreshFriends();
 }
@@ -3240,7 +3280,7 @@ function receiveShake(f) {
 }
 
 function sendShake() {
-  if (state.focus) return toast('집중 중에는 흔들 수 없어요. 놀러 온 친구와는 대화할 수 있어요');
+  if (state.focus) return toast('집중 중에는 흔들 수 없어요. 대화는 계속할 수 있어요');
   if (!fTarget) return toast('흔들 친구를 골라 주세요');
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요');
@@ -3332,9 +3372,9 @@ function sendNote() {
   const photo = attached;
   if (!text && !photo) return;
   const room = chatRoom();
-  if (!room) return toast('친구네 집에 놀러 가거나 친구가 놀러 오면 대화할 수 있어요');
-  // 친구네 집이면 집주인에게, 우리 집이면 놀러 온 친구들 모두에게
-  const targets = (room === state.myCode ? guestsHere().map((x) => conns.get(x.code)) : [conns.get(room)]).filter((c) => c && c.open);
+  if (!room) return toast('친구와 연결되면 바탕화면에서 바로 대화할 수 있어요');
+  // 친구네 집이면 집주인에게, 아니면 연결된 친구들(우리 집 손님 포함) 모두에게
+  const targets = (room === state.myCode ? chatFriends().map((code) => conns.get(code)) : [conns.get(room)]).filter((c) => c && c.open);
   if (!targets.length) return toast('친구와 연결이 끊겼어요');
   // 깨어 있는 말랑이가 쪽지를 들고 간다
   const p = focusPet();
@@ -3447,7 +3487,7 @@ const house = { code: null, pets: [], guest: null, views: new Map(), kind: 'clea
 const guestPet = (id, info) => ({ id, visitor: true, ...visitorLooks(info), hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] });
 
 function visitHouse() {
-  if (state.focus) return toast('집중 중에는 놀러 갈 수 없어요. 놀러 온 친구와는 대화할 수 있어요');
+  if (state.focus) return toast('집중 중에는 놀러 갈 수 없어요. 대화는 계속할 수 있어요');
   if (!fTarget) return toast('놀러 갈 친구를 골라 주세요');
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요');
@@ -3639,11 +3679,11 @@ function refreshFriends() {
   const f = fTarget && findFriend(fTarget);
   const room = chatRoom();
   const host = room && room !== state.myCode && findFriend(room);
-  $('fTo').textContent = room === state.myCode ? `우리 집 대화 · ${roomSize(room)}명`
+  $('fTo').textContent = room === state.myCode ? `바탕화면 대화 · ${roomSize(room)}명`
     : host ? `${friendName(host)}네 집 대화 · ${roomSize(room)}명`
-    : f ? `${friendName(f)} — 놀러 가면 대화할 수 있어요` : '놀러 갈 친구를 골라 주세요';
+    : '친구와 연결되면 바로 대화할 수 있어요';
   for (const id of ['fMsg', 'fSend', 'fPhoto']) $(id).disabled = !room;
-  $('fMsg').placeholder = room ? '말랑이가 전해 줄 쪽지' : '같은 집에 있을 때만 대화할 수 있어요';
+  $('fMsg').placeholder = room ? '말랑이가 말풍선으로 전해 줘요' : '연결된 친구가 없어요';
   $('fShake').disabled = !f || !conns.has(f.code) || state.focus;
   $('fVisit').disabled = !f || !conns.has(f.code) || state.focus;
   $('fVisit').textContent = house.code && house.code === fTarget ? '집에 있어요' : '놀러 가기';
@@ -3662,7 +3702,7 @@ function renderChat() {
   if (!items.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = room ? '아직 나눈 대화가 없어요' : '친구네 집에 놀러 가거나 친구가 놀러 오면 대화할 수 있어요';
+    empty.textContent = room ? '아직 나눈 대화가 없어요' : '친구와 연결되면 바탕화면에서 바로 대화할 수 있어요';
     box.replaceChildren(empty);
     return;
   }

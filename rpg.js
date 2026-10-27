@@ -193,7 +193,7 @@ function openParty(zone) {
 }
 
 function askTogether() {
-  const room = chatRoom();
+  const room = houseRoom();
   if (!room) return toast('친구와 같은 집에 있을 때 같이 갈 수 있어요');
   if (room === state.myCode) {
     openParty(selZone);
@@ -422,6 +422,8 @@ function cook(id) {
   if (!r || !canCook(r)) return toast('재료가 모자라요');
   for (const [k, n] of Object.entries(r.need)) R.bag[k] -= n;
   R.dishes[id] = (R.dishes[id] || 0) + 1;
+  scene.cook = { id, t: 0 };
+  scene.steam = [];
   toast(`${r.name} 완성!`);
   persist();
   refreshAdv(true);
@@ -464,7 +466,10 @@ const SW = sceneCv.width, SH = sceneCv.height, SG = 82;   // 장면 크기 · �
 let advPos = null;
 let kitchen = false;
 let advKey = '';
-const scene = { scroll: 0, fight: null, floaters: [], bits: [], yum: null, views: new Map(), mates: new Map() };
+const scene = {
+  scroll: 0, fight: null, floaters: [], bits: [], yum: null, views: new Map(), mates: new Map(),
+  cook: null, steam: [], kviews: new Map(),   // 주방
+};
 
 function openAdv() {
   advBox.hidden = false;
@@ -520,10 +525,10 @@ function refreshAdv(force = false) {
   $('advGo').hidden = !!p;
   $('advTogether').hidden = !!p;
   $('advBack').hidden = !p;
-  $('advTogether').disabled = !chatRoom();
-  $('advTogether').title = chatRoom() ? '같은 집에 모인 친구들과 같이 모험 가요' : '친구와 같은 집에 있을 때 쓸 수 있어요';
+  $('advTogether').disabled = !houseRoom();
+  $('advTogether').title = houseRoom() ? '같은 집에 모인 친구들과 같이 모험 가요' : '친구와 같은 집에 있을 때 쓸 수 있어요';
 
-  const key = `${!!p}|${state.pets.map((x) => x.id + cannotGo(x) + rpgOf(x).lv).join()}|${selZone}|${selPetId}|${[...invites.entries()].map(([k, v]) => k + v.id + v.n).join()}|${mates().map((m) => m.code + m.lv).join()}|${!!chatRoom()}`;
+  const key = `${!!p}|${state.pets.map((x) => x.id + cannotGo(x) + rpgOf(x).lv).join()}|${selZone}|${selPetId}|${[...invites.entries()].map(([k, v]) => k + v.id + v.n).join()}|${mates().map((m) => m.code + m.lv).join()}|${!!houseRoom()}`;
   if (!force && key === advKey) return updatePartyBars();
   advKey = key;
   renderParty();
@@ -568,7 +573,7 @@ function renderParty() {
     return;
   }
   const now = Date.now();
-  const room = chatRoom();
+  const room = houseRoom();
   for (const [code, inv] of invites) {
     // 지금 있는 집의 파티만 (오래된 초대는 버린다)
     if (now - inv.at > 10 * 60000 || code !== room) { invites.delete(code); continue; }
@@ -619,7 +624,7 @@ function refreshKitchen(force) {
 
 // ---------- 싸우는 모습 ----------
 function showFight(res) {
-  if (advBox.hidden) return;
+  if (advBox.hidden || kitchen) return;
   scene.fight = { res, t: 0 };
 }
 const HIT = 0.45, ENTER = 0.8;
@@ -668,6 +673,7 @@ function petView(id, map) {
 }
 
 function drawScene(t, dt) {
+  if (kitchen) return drawKitchen(t, dt);
   const a = R.adv;
   const p = awayPet();
   const zone = zoneOf(a ? a.zone : selZone);
@@ -752,7 +758,11 @@ function drawScene(t, dt) {
 
   // 도시락 받았을 때
   if (scene.yum && (scene.yum.t -= dt) > 0) drawSprite(sctx, scene.yum.sprite, 96, SG - 34 - (1.4 - scene.yum.t) * 10, 2);
-  // 떠오르는 숫자 · 재료 · 연기
+  drawFx(dt);
+}
+
+// 떠오르는 숫자 · 재료 · 연기
+function drawFx(dt) {
   sctx.font = 'bold 11px Galmuri11, "Malgun Gothic", sans-serif';
   sctx.textAlign = 'center'; sctx.textBaseline = 'middle';
   scene.floaters = scene.floaters.filter((fl) => (fl.t -= dt) > 0);
@@ -770,6 +780,171 @@ function drawScene(t, dt) {
     drawSprite(sctx, b.sprite, b.x, b.y, 2);
   }
   sctx.globalAlpha = 1;
+}
+
+// ---------- 요리하는 모습 ----------
+const COOK_IN = 0.9, COOK_FRY = 2.4, COOK_LEN = 3.6;   // 재료 넣기 → 볶기 → 완성 → 끝
+const PAN_X = 198, PAN_Y = 50;                          // 프라이팬 가운데 · 바닥
+const CHEF_X = 138;
+
+// 집에 있는 아이가 요리한다 (깨어 있는 아이 먼저)
+function cookPet() {
+  const pool = [selected(), ...state.pets].filter((p) => p && stageOf(p) !== 'egg');
+  return pool.find((p) => !p.sleeping) || pool[0] || null;
+}
+
+function drawKitchenBg(c, t, fire, shake) {
+  c.fillStyle = T.bg;
+  c.fillRect(0, 0, SW, SG);
+  // 창문
+  c.fillStyle = T.border;
+  c.fillRect(102, 20, 32, 26);
+  c.fillStyle = T.clean;
+  c.fillRect(104, 22, 28, 22);
+  c.fillStyle = T.border;
+  c.fillRect(117, 22, 2, 22);
+  c.fillRect(104, 32, 28, 2);
+  // 선반과 병
+  c.fillStyle = T.pot;
+  c.fillRect(10, 46, 82, 3);
+  c.fillRect(16, 49, 3, 5);
+  c.fillRect(83, 49, 3, 5);
+  [T.clean, T.hunger, T.warn, T.fun].forEach((col, i) => {
+    const x = 18 + i * 18, h = i % 2 ? 10 : 13;
+    c.fillStyle = col;
+    c.fillRect(x, 46 - h, 10, h);
+    c.fillStyle = T.border;
+    c.fillRect(x - 1, 46 - h - 3, 12, 3);
+  });
+  // 타일 벽 · 걸어 둔 국자들
+  c.fillStyle = T.gauge_empty;
+  c.fillRect(150, 28, 104, SG - 28);
+  c.fillStyle = T.bg;
+  for (let y = 36; y < SG; y += 10) c.fillRect(150, y, 104, 2);
+  for (let x = 160; x < 254; x += 12) c.fillRect(x, 28, 2, SG - 28);
+  c.fillStyle = T.border;
+  c.fillRect(166, 22, 70, 2);
+  c.fillStyle = T.text_sub;
+  c.fillRect(178, 24, 2, 10); c.fillRect(175, 34, 8, 4);               // 국자
+  c.fillRect(204, 24, 2, 8); c.fillRect(201, 32, 8, 6);                // 뒤집개
+  c.fillRect(226, 24, 2, 6); c.fillRect(223, 30, 8, 2); c.fillRect(223, 30, 2, 8); c.fillRect(229, 30, 2, 8); c.fillRect(223, 36, 8, 2);  // 거품기
+  // 바닥
+  c.fillStyle = T.floor;
+  c.fillRect(0, SG, SW, SH - SG);
+  c.fillStyle = T.floor_grain;
+  for (let x = 6; x < SW; x += 34) c.fillRect(x, SG + 7, 14, 2);
+  for (let x = 22; x < SW; x += 34) c.fillRect(x, SG + 13, 10, 2);
+  c.fillStyle = T.border;
+  c.fillRect(0, SG, SW, 2);
+  // 가스레인지
+  c.fillStyle = T.text_sub;
+  c.fillRect(162, 56, 74, SG - 56);
+  c.fillStyle = T.border;
+  c.fillRect(160, 54, 78, 4);
+  c.fillStyle = T.gauge_empty;
+  c.fillRect(172, 62, 54, 16);
+  c.fillStyle = T.border;
+  c.fillRect(182, 64, 34, 2);
+  c.fillRect(166, 58, 4, 2); c.fillRect(228, 58, 4, 2);
+  // 불
+  if (fire) {
+    for (let i = 0; i < 5; i++) {
+      const h = 2 + ((Math.floor(t * 12) + i * 2) % 3) * 2;
+      c.fillStyle = T.warn;
+      c.fillRect(PAN_X - 10 + i * 4, 54 - h, 3, h);
+      c.fillStyle = T.hunger;
+      c.fillRect(PAN_X - 9 + i * 4, 54 - Math.ceil(h / 2), 1, Math.ceil(h / 2));
+    }
+  }
+  // 프라이팬
+  const px = PAN_X + shake.x, py = PAN_Y + shake.y;
+  c.fillStyle = T.pot;
+  c.fillRect(px - 30, py - 5, 16, 3);
+  c.fillStyle = T.outline;
+  c.fillRect(px - 14, py - 6, 28, 6);
+  c.fillStyle = T.text_sub;
+  c.fillRect(px - 12, py - 6, 24, 2);
+}
+
+function drawKitchen(t, dt) {
+  const ck = scene.cook;
+  if (ck && (ck.t += dt) > COOK_LEN) scene.cook = null;
+  const r = ck && RECIPES[ck.id];
+  const ft = ck ? ck.t : -1;
+  const frying = ck && ft >= COOK_IN && ft < COOK_FRY;
+  const done = ck && ft >= COOK_FRY;
+  const shake = frying ? { x: Math.round(Math.sin(t * 28) * 2), y: Math.sin(ft * 5) > 0.7 ? -2 : 0 } : { x: 0, y: 0 };
+  drawKitchenBg(sctx, t, ck && ft >= COOK_IN * 0.5 && !done, shake);
+
+  // 요리사 말랑이: 볶을 땐 콩콩, 다 되면 기뻐서 폴짝
+  const p = cookPet();
+  if (p) {
+    const rv = petView(p.id, scene.kviews);
+    rv.x = CHEF_X; rv.face = 1;
+    rv.y = SG - (done ? Math.abs(Math.sin(t * 9)) * 7 : frying ? Math.abs(Math.sin(t * 8)) * 2 : 0);
+    rv.playT = done ? 1 : 0;
+    drawPet(sctx, p, rv, stageOf(p), t, SG, 2);
+    // 뒤집개로 휘휘
+    if (frying) {
+      const bx = CHEF_X + 12, by = SG - 14;
+      const tx = PAN_X + shake.x - 4 + Math.sin(t * 12) * 7, ty = PAN_Y + shake.y - 8;
+      sctx.fillStyle = T.pot;
+      for (let i = 0; i <= 8; i++) sctx.fillRect(Math.round(bx + (tx - bx) * i / 8), Math.round(by + (ty - by) * i / 8), 2, 2);
+      sctx.fillStyle = T.text_sub;
+      sctx.fillRect(Math.round(tx) - 2, Math.round(ty), 6, 3);
+    }
+  }
+
+  if (r) {
+    const ks = Object.keys(r.need);
+    if (!done) {
+      // 재료가 하나씩 퐁퐁 팬으로 들어가고, 볶을 땐 팬 안에서 튄다
+      ks.forEach((k, i) => {
+        const toX = PAN_X + shake.x + (i - (ks.length - 1) / 2) * 8;
+        const toY = PAN_Y + shake.y - 4;
+        const q = clamp((ft - i * 0.18) / 0.5, 0, 1);
+        if (q <= 0) return;
+        const x = q < 1 ? CHEF_X + (toX - CHEF_X) * q : toX;
+        const y = q < 1 ? (SG - 26) + (toY - (SG - 26)) * q - Math.sin(q * Math.PI) * 22
+          : toY - (frying ? Math.max(0, Math.sin(ft * 9 + i * 2)) * 6 : 0);
+        drawSprite(sctx, ITEMS[k].sprite, x, y, 2);
+      });
+      if (frying && Math.random() < dt * 7) scene.steam.push({ x: PAN_X + rand(-12, 12), y: PAN_Y - 10, t: 1 });
+    } else {
+      // 완성! 팬 위로 요리가 쏙
+      const q = Math.min(1, (ft - COOK_FRY) / 0.35);
+      drawSprite(sctx, r.sprite, PAN_X, PAN_Y - 4 - q * 14, 2);
+      if (!ck.done) {
+        ck.done = true;
+        for (let i = 0; i < 6; i++) scene.bits.push({ x: PAN_X, y: PAN_Y - 16, vx: rand(-70, 70), vy: -rand(60, 130), t: 0.8, sprite: 'sparkle' });
+        scene.floaters.push({ x: PAN_X - 20, y: 24, text: `${r.name} 완성!`, color: T.warn, t: 1.4 });
+      }
+    }
+  }
+  // 김이 모락모락
+  scene.steam = scene.steam.filter((s) => (s.t -= dt) > 0);
+  for (const s of scene.steam) {
+    s.y -= dt * 22;
+    s.x += Math.sin(s.t * 8) * dt * 10;
+    sctx.globalAlpha = Math.min(1, s.t * 1.5) * 0.8;
+    drawSprite(sctx, 'puff', s.x, s.y, 2, false);
+  }
+  sctx.globalAlpha = 1;
+
+  sctx.font = '11px Galmuri11, "Malgun Gothic", sans-serif';
+  sctx.textBaseline = 'top';
+  sctx.textAlign = 'left';
+  sctx.fillStyle = T.text_sub;
+  sctx.fillText(p ? `${p.name}네 주방` : '주방', 8, 6);
+  if (r && !done) {
+    sctx.textAlign = 'right';
+    sctx.fillStyle = T.text;
+    sctx.fillText(`${r.name} 만드는 중..`, SW - 6, 6);
+  } else if (!r && !p) {
+    sctx.textAlign = 'right';
+    sctx.fillText('요리할 말랑이가 없어요', SW - 6, 6);
+  }
+  drawFx(dt);
 }
 
 // ---------- 연결 ----------
