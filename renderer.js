@@ -2904,6 +2904,12 @@ function checkNeeds(p) {
 // PeerJS 공개 서버는 둘을 이어 줄 때만 쓰고 쪽지는 둘 사이에 바로 오간다.
 // 그래서 둘 다 켜져 있을 때만 전해진다.
 const PEER_PREFIX = 'malangpet-';
+// 서로의 인터넷 주소를 알아낼 STUN 서버. PeerJS 기본값(구글 19302 포트)은 회사 망 등에서 막히는 일이 많고
+// 기본 TURN 서버는 없어져서, 잘 열려 있는 3478 포트 서버들을 먼저 쓴다
+const ICE_SERVERS = [
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: ['stun:stun1.l.google.com:3478', 'stun:stun.l.google.com:19302'] },
+];
 const MAX_FRIENDS = 20;
 const friendsBox = $('friends');
 const conns = new Map();     // 친구 코드 → 인사까지 마친 연결
@@ -2938,7 +2944,7 @@ function setNet(s) {
 function startNet() {
   if (typeof Peer === 'undefined') return setNet('off');
   setNet('connecting');
-  const pr = new Peer(PEER_PREFIX + state.myCode.toLowerCase(), { debug: 0 });
+  const pr = new Peer(PEER_PREFIX + state.myCode.toLowerCase(), { debug: 0, config: { iceServers: ICE_SERVERS } });
   peer = pr;
   pr.on('open', () => { setNet('on'); connectFriends(); });
   pr.on('connection', (conn) => setupConn(conn));
@@ -3042,9 +3048,15 @@ function onData(conn, d) {
   if (d.t === 'bye') { conn.close(); dropConn(conn); return; }   // 친구가 앱을 껐다
   if (d.t === 'part') receivePart(conn, d);
   if (d.t === 'msg') receiveNote(f, d, takePhoto(conn, d.photo));
+  if (d.t === 'room') receiveRoom(f, d, takePhoto(conn, d.photo));
   if (d.t === 'shake') receiveShake(f);
-  if (d.t === 'visit') { guestArrived(f); conn.send(houseSnapshot()); }
-  if (d.t === 'house?') conn.send(houseSnapshot());
+  if (d.t === 'visit') {
+    // 한 집에는 집주인 포함 다섯 명까지
+    if (!guestsHere().some((x) => x.code === f.code) && guestsHere().length >= MAX_ROOM - 1) conn.send({ t: 'full' });
+    else { guestArrived(f, d.pet); conn.send(houseSnapshot(f.code)); }
+  }
+  if (d.t === 'full' && house.code === f.code) { toast(`${friendName(f)}네 집이 꽉 찼어요 (최대 ${MAX_ROOM}명)`); leaveHouseVisit(); }
+  if (d.t === 'house?') conn.send(houseSnapshot(f.code));
   if (d.t === 'house') receiveHouse(f, d);
   if (d.t === 'leave') guestLeft(f);
   if (d.t === 'status') {
@@ -3111,17 +3123,51 @@ function sayBye() {
   for (const c of conns.values()) if (c.open) { try { c.send({ t: 'bye' }); } catch { /* 이미 끊김 */ } }
 }
 
+// 대화는 같은 집에 모여 있을 때만: 친구네 집에 놀러 가 있으면 그 집, 아니면 손님이 와 있는 우리 집.
+// 한 집에 여럿이 모이면 그룹 대화 — 손님끼리는 직접 이어지지 않아서 집주인이 말을 전해 준다.
+const MAX_ROOM = 5;   // 한 집에 모일 수 있는 사람 (집주인 포함)
+const guestsHere = () => visitors.filter((x) => x.visiting && conns.has(x.code));
+function chatRoom() {
+  if (house.code) return house.code;
+  return guestsHere().length ? state.myCode : null;
+}
+const roomSize = (room) => (room === state.myCode ? guestsHere().length + 1 : house.others.length + 2);
+
+// 집주인 → 손님, 손님 → 집주인 쪽지
 function receiveNote(f, d, img) {
   const text = cleanText(d.text, 40);
   if (!text && !img) return;
   const nick = friendName(f);
-  logNote({ code: f.code, dir: 'in', text, img });
-  const info = d.pet && typeof d.pet === 'object' ? d.pet : {};
-  const vis = visitorFor(f, info);
-  vis.v.vy = -380; vis.v.sv -= 2;
   const thumb = img ? makeThumb(img) : null;
-  pushChat(vis.chat, text, thumb);
-  if (house.code === f.code) { pushChat(house.chat, text, thumb); house.talker = visitorLooks(info).name; }
+  const guest = guestsHere().find((x) => x.code === f.code);
+  if (house.code === f.code) {
+    // 놀러 가 있는 집의 주인이 한 말
+    logNote({ room: f.code, code: f.code, nick, dir: 'in', text, img });
+    pushChat(house.chat, text, thumb);
+    house.talker = visitorLooks(d.pet && typeof d.pet === 'object' ? d.pet : {}).name;
+  } else if (guest) {
+    // 우리 집 손님이 한 말 → 다른 손님들에게도 전해 준다
+    logNote({ room: state.myCode, code: f.code, nick, dir: 'in', text, img });
+    pushChat(guest.chat, text, thumb);
+    for (const x of guestsHere()) {
+      const c = x.code !== f.code && conns.get(x.code);
+      if (c && c.open) c.send({ t: 'room', from: f.code, nick, text, photo: img ? sendPhoto(c, img) : null });
+    }
+  } else return;   // 같은 집에 있지 않은 친구의 쪽지는 받지 않는다
+  if (!state.focus) notify(`${nick}: ${text || '사진을 보냈어요'}`);
+  refreshFriends();
+}
+
+// 집주인이 전해 준 다른 손님의 말 (그룹 대화)
+function receiveRoom(f, d, img) {
+  if (house.code !== f.code) return;
+  const from = parseCode(d.from);
+  const text = cleanText(d.text, 40);
+  if (from.length !== 8 || from === state.myCode || (!text && !img)) return;
+  const nick = cleanText(d.nick, 10) || fmtCode(from);
+  logNote({ room: f.code, code: from, nick, dir: 'in', text, img });
+  const o = house.others.find((x) => x.code === from);
+  if (o) pushChat(o.chat, text, img ? makeThumb(img) : null);
   if (!state.focus) notify(`${nick}: ${text || '사진을 보냈어요'}`);
   refreshFriends();
 }
@@ -3170,7 +3216,7 @@ function receiveShake(f) {
 }
 
 function sendShake() {
-  if (state.focus) return toast('집중 중에는 흔들 수 없어요. 쪽지는 보낼 수 있어요');
+  if (state.focus) return toast('집중 중에는 흔들 수 없어요. 놀러 온 친구와는 대화할 수 있어요');
   if (!fTarget) return toast('흔들 친구를 골라 주세요');
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요');
@@ -3248,33 +3294,33 @@ function clearAttach() {
   $('fFile').value = '';
 }
 
+// 사진은 조각내서 먼저 보내고, 쪽지에는 사진 번호를 붙인다
+function sendPhoto(conn, data) {
+  const id = Math.random().toString(36).slice(2, 10);
+  const n = Math.ceil(data.length / PART_SIZE);
+  for (let i = 0; i < n; i++) conn.send({ t: 'part', id, i, n, s: data.slice(i * PART_SIZE, (i + 1) * PART_SIZE) });
+  return id;
+}
+
 function sendNote() {
   const input = $('fMsg');
   const text = cleanText(input.value, 40);
   const photo = attached;
   if (!text && !photo) return;
-  if (!fTarget) return toast('쪽지를 받을 친구를 골라 주세요');
-  const conn = conns.get(fTarget);
-  if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요. 둘 다 켜져 있어야 전해져요');
+  const room = chatRoom();
+  if (!room) return toast('친구네 집에 놀러 가거나 친구가 놀러 오면 대화할 수 있어요');
+  // 친구네 집이면 집주인에게, 우리 집이면 놀러 온 친구들 모두에게
+  const targets = (room === state.myCode ? guestsHere().map((x) => conns.get(x.code)) : [conns.get(room)]).filter((c) => c && c.open);
+  if (!targets.length) return toast('친구와 연결이 끊겼어요');
   // 깨어 있는 말랑이가 쪽지를 들고 간다
   const p = focusPet();
-  // 사진은 조각내서 먼저 보내고, 쪽지에 사진 번호를 붙인다
-  let photoId = null;
-  if (photo) {
-    photoId = Math.random().toString(36).slice(2, 10);
-    const n = Math.ceil(photo.data.length / PART_SIZE);
-    for (let i = 0; i < n; i++) conn.send({ t: 'part', id: photoId, i, n, s: photo.data.slice(i * PART_SIZE, (i + 1) * PART_SIZE) });
-  }
-  conn.send({
-    t: 'msg', text, photo: photoId,
-    pet: myPetInfo(),
-  });
-  logNote({ code: fTarget, dir: 'out', text, img: photo ? photo.data : null });
+  for (const conn of targets) conn.send({ t: 'msg', text, photo: photo ? sendPhoto(conn, photo.data) : null, pet: myPetInfo() });
+  logNote({ room, code: state.myCode, dir: 'out', text, img: photo ? photo.data : null });
   input.value = '';
   clearAttach();
   // 내 화면에서도 내 말랑이가 보낸 말을 말풍선으로 말한다
   pushChat(myChat, text, photo ? photo.thumb : null);
-  if (house.code === fTarget) pushChat(house.guestChat, text, photo ? photo.thumb : null);
+  if (house.code) pushChat(house.guestChat, text, photo ? photo.thumb : null);
   if (p) {
     const v = viewOf(p);
     v.vy = -380; v.sv -= 2; v.emote = null; v.speech = null;
@@ -3317,7 +3363,8 @@ function visitorFor(f, info) {
     emit(v.x, v.y, 'sparkle', { n: 5, spread: 100, up: 160 });
     vis = { pet, v, code: f.code, nick, chat: [] };
     visitors.push(vis);
-    while (visitors.length > 3) removeVisitor(visitors[0]);
+    // 우리 집에 놀러 와 있는 아이는 두고, 그냥 놀러 온 아이부터 돌려보낸다
+    while (visitors.length > MAX_ROOM - 1) removeVisitor(visitors.find((x) => !x.visiting) || visitors[0]);
     toast(`${nick}님의 ${josa(pet.name, '이', '가')} 놀러 왔어요`);
   }
   return vis;
@@ -3372,10 +3419,11 @@ const fHouse = $('fHouse');
 const fhCanvas = $('fhRoom');
 const fhCtx = fhCanvas.getContext('2d');
 const friendSky = makeSky();
-const house = { code: null, pets: [], guest: null, views: new Map(), kind: 'clear', line: '', pos: null, askT: 0, chat: [], guestChat: [], talker: '' };
+const house = { code: null, pets: [], guest: null, views: new Map(), kind: 'clear', line: '', pos: null, askT: 0, chat: [], guestChat: [], talker: '', others: [] };
+const guestPet = (id, info) => ({ id, visitor: true, ...visitorLooks(info), hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] });
 
 function visitHouse() {
-  if (state.focus) return toast('집중 중에는 놀러 갈 수 없어요. 쪽지는 보낼 수 있어요');
+  if (state.focus) return toast('집중 중에는 놀러 갈 수 없어요. 놀러 온 친구와는 대화할 수 있어요');
   if (!fTarget) return toast('놀러 갈 친구를 골라 주세요');
   const conn = conns.get(fTarget);
   if (!conn || !conn.open) return toast('친구가 지금 꺼져 있어요');
@@ -3389,8 +3437,9 @@ function visitHouse() {
   house.chat.length = 0;
   house.guestChat.length = 0;
   house.talker = '';
-  house.guest = { id: 'house-me', visitor: true, ...visitorLooks(info), hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
-  conn.send({ t: 'visit' });
+  house.others = [];
+  house.guest = guestPet('house-me', info);
+  conn.send({ t: 'visit', pet: info });
   $('fhName').textContent = `${friendName(findFriend(fTarget))}네 집`;
   fHouse.hidden = false;
   placeFriendHouse();
@@ -3403,14 +3452,17 @@ function leaveHouseVisit() {
   if (conn && conn.open) conn.send({ t: 'leave' });
   house.code = null;
   fHouse.hidden = true;
+  refreshFriends();
 }
 
-// 내 집 모습을 친구에게 (말랑이 모습 · 자는지 · 창밖 날씨)
-function houseSnapshot() {
+// 내 집 모습을 친구에게 (말랑이 모습 · 자는지 · 창밖 날씨 · 같이 놀러 와 있는 다른 손님)
+const looksOf = (p) => ({ name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p) });
+function houseSnapshot(forCode) {
   return {
     t: 'house',
     pets: state.pets.filter((p) => stageOf(p) !== 'egg').slice(0, MAX_PETS)
-      .map((p) => ({ name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p), sleeping: !!p.sleeping })),
+      .map((p) => ({ ...looksOf(p), sleeping: !!p.sleeping })),
+    guests: guestsHere().filter((x) => x.code !== forCode).map((x) => ({ code: x.code, nick: x.nick, pet: looksOf(x.pet) })),
     kind: weather.kind,
     line: weatherText(),
   };
@@ -3425,14 +3477,26 @@ function receiveHouse(f, d) {
   });
   house.kind = Object.hasOwn(WEATHER_KO, String(d.kind)) ? d.kind : 'clear';
   house.line = cleanText(d.line, 60);
+  // 같이 놀러 와 있는 다른 손님들 (말풍선이 이어지게 같은 친구는 같은 물체로)
+  const before = house.others.length;
+  house.others = (Array.isArray(d.guests) ? d.guests : []).slice(0, MAX_ROOM - 2).flatMap((g) => {
+    const code = parseCode(g && g.code);
+    if (code.length !== 8 || code === state.myCode) return [];
+    const info = g.pet && typeof g.pet === 'object' ? g.pet : {};
+    const old = house.others.find((x) => x.code === code);
+    if (old) { Object.assign(old.pet, visitorLooks(info)); old.nick = cleanText(g.nick, 10) || old.nick; return [old]; }
+    return [{ code, nick: cleanText(g.nick, 10) || fmtCode(code), pet: guestPet('house-g-' + code, info), chat: [] }];
+  });
+  if (house.others.length !== before) refreshFriends();
 }
 
 // 친구가 우리 집에 놀러 왔다 / 돌아갔다
-function guestArrived(f) {
-  const vis = visitors.find((x) => x.code === f.code);
+function guestArrived(f, info) {
+  const vis = info && typeof info === 'object' ? visitorFor(f, info) : visitors.find((x) => x.code === f.code);
   if (!vis) return;
   vis.visiting = true;
   toast(`${friendName(f)}님의 ${josa(vis.pet.name, '이', '가')} 우리 집에 놀러 왔어요! (말랑이네에서 볼 수 있어요)`);
+  refreshFriends();
 }
 function guestLeft(f) {
   const vis = visitors.find((x) => x.code === f.code);
@@ -3440,6 +3504,7 @@ function guestLeft(f) {
   vis.visiting = false;
   if (vis.v.inside) leaveHouse(vis.pet, vis.v);
   vis.v.goHome = false;
+  refreshFriends();
 }
 
 function updateFriendHouse(t, dt) {
@@ -3448,6 +3513,7 @@ function updateFriendHouse(t, dt) {
     toast('친구가 앱을 꺼서 집으로 돌아왔어요');
     house.code = null;
     fHouse.hidden = true;
+    refreshFriends();
   }
   if (fHouse.hidden || !house.code) return;
   if ((house.askT -= dt) <= 0) {
@@ -3455,11 +3521,16 @@ function updateFriendHouse(t, dt) {
     const conn = conns.get(house.code);
     if (conn && conn.open) conn.send({ t: 'house?' });
   }
-  const pets = house.guest ? [...house.pets, house.guest] : house.pets;
+  const pets = [...house.pets, ...house.others.map((o) => o.pet), ...(house.guest ? [house.guest] : [])];
   drawRoomScene(fhCtx, pets, house.views, t, dt, house.kind, friendSky);
-  // 친구 쪽지는 친구네 말랑이(쪽지 보낸 아이, 없으면 깨어 있는 아이)가, 내 쪽지는 손님으로 간 내 말랑이가 말한다
+  // 친구 쪽지는 친구네 말랑이(쪽지 보낸 아이, 없으면 깨어 있는 아이)가, 내 쪽지는 손님으로 간 내 말랑이가,
+  // 다른 손님의 말은 그 손님네 말랑이가 말한다
   ageChat(house.chat, dt);
   ageChat(house.guestChat, dt);
+  for (const o of house.others) {
+    ageChat(o.chat, dt);
+    drawRoomChat(fhCtx, house.views.get(o.pet.id), o.chat);
+  }
   const tp = house.pets.find((p) => p.name === house.talker && !p.sleeping) || house.pets.find((p) => !p.sleeping) || house.pets[0];
   if (tp) drawRoomChat(fhCtx, house.views.get(tp.id), house.chat);
   if (house.guest) drawRoomChat(fhCtx, house.views.get(house.guest.id), house.guestChat);
@@ -3538,7 +3609,13 @@ function refreshFriends() {
     }));
   }
   const f = fTarget && findFriend(fTarget);
-  $('fTo').textContent = f ? `${friendName(f)}와의 대화` : '대화할 친구를 골라 주세요';
+  const room = chatRoom();
+  const host = room && room !== state.myCode && findFriend(room);
+  $('fTo').textContent = room === state.myCode ? `우리 집 대화 · ${roomSize(room)}명`
+    : host ? `${friendName(host)}네 집 대화 · ${roomSize(room)}명`
+    : f ? `${friendName(f)} — 놀러 가면 대화할 수 있어요` : '놀러 갈 친구를 골라 주세요';
+  for (const id of ['fMsg', 'fSend', 'fPhoto']) $(id).disabled = !room;
+  $('fMsg').placeholder = room ? '말랑이가 전해 줄 쪽지' : '같은 집에 있을 때만 대화할 수 있어요';
   $('fShake').disabled = !f || !conns.has(f.code) || state.focus;
   $('fVisit').disabled = !f || !conns.has(f.code) || state.focus;
   $('fVisit').textContent = house.code && house.code === fTarget ? '집에 있어요' : '놀러 가기';
@@ -3546,27 +3623,29 @@ function refreshFriends() {
 }
 
 // 대화창: 내가 보낸 건 오른쪽, 친구가 보낸 건 왼쪽 말풍선
+// 지금 있는 집의 대화만 보여 준다 (흔들기 같은 알림은 고른 친구 것도 같이)
 function renderChat() {
-  const items = noteLog.filter((n) => !fTarget || n.code === fTarget);
-  const key = `${fTarget}|${noteSeq}`;
+  const room = chatRoom();
+  const items = noteLog.filter((n) => (room && n.room === room) || (n.dir === 'sys' && n.code === fTarget));
+  const key = `${room}|${fTarget}|${noteSeq}`;
   if (key === chatKey) return;
   chatKey = key;
   const box = $('fLog');
   if (!items.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = fTarget ? '아직 주고받은 쪽지가 없어요' : '친구를 고르면 대화가 보여요';
+    empty.textContent = room ? '아직 나눈 대화가 없어요' : '친구네 집에 놀러 가거나 친구가 놀러 오면 대화할 수 있어요';
     box.replaceChildren(empty);
     return;
   }
   box.replaceChildren(...items.slice(-30).map((n) => {
     const el = document.createElement('div');
     el.className = 'msg ' + n.dir;
-    if (n.dir !== 'sys' && !fTarget) {
+    // 여럿이 모인 집에서는 누가 한 말인지 이름을 붙인다
+    if (n.dir === 'in' && room && roomSize(room) > 2) {
       const who = document.createElement('span');
       who.className = 'who';
-      const fr = findFriend(n.code);
-      who.textContent = n.dir === 'out' ? `→ ${fr ? friendName(fr) : ''}` : fr ? friendName(fr) : '';
+      who.textContent = n.nick || '';
       el.append(who);
     }
     if (n.img) {
