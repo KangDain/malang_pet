@@ -49,6 +49,8 @@ const FORMS = {
 };
 // 아기·어린이 때 꼬질한 채로 이만큼(시간) 지내면 어른 꼬질이가 된다
 const GRUBBY_H = 8;
+// 집중 모드에서 물고기를 이만큼 낚으면 낚시꾼 특성 (어른 모습과 따로, 언제든 생긴다)
+const ANGLER_FISH = 100;
 const CARE_FORM = { feed: 'chubby', play: 'sporty', clean: 'shiny', sleep: 'sleepy' };
 const TENDENCY = { feed: '먹보', play: '개구쟁이', clean: '깔끔쟁이', sleep: '잠꾸러기' };
 const formOf = (p, st) => (st === 'adult' && Object.hasOwn(FORMS, p.form || '') ? FORMS[p.form] : null);
@@ -107,6 +109,7 @@ const SPR = {
   dots:     ['s s s'],
   letter:   ['bbbbbbb', 'bsbbbsb', 'bbsbsbb', 'bbbsbbb', 'bbbbbbb'],
   crown:    ['h h h', 'hhhhh', 'hwhwh'],
+  strawHat: ['  hhh  ', ' hwwwh ', 'hhhhhhh'],
   broom:    ['      tt', '     tt ', '    tt  ', '   tt   ', '  BBB   ', ' hhhhh  ', ' hhhhh  ', 'hhhhhhh ', 'h h h h '],
   puff:     [' s ', 'sss', ' s '],
   fly:      ['b b', ' o '],
@@ -516,6 +519,7 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
   shine(b, 2 - hh);
   if (form === FORMS.shiny) { shine(-b - 1, 3 - hh); shine(-b, 4 - hh); shine(b + 1, 4 - hh); }
   if (form === FORMS.royal) stamp(cells, SPR.crown, 0, -hh, pal);
+  else if (p.angler) stamp(cells, SPR.strawHat, 0, 1 - hh, pal);   // 낚시꾼은 밀짚모자
   // 안 씻기면 꼬질꼬질: 몸에 얼룩이 하나둘 생긴다
   // 꼬질이는 씻겨도 볼에 얼룩 두 점이 남는다 (트레이드마크)
   const spots = Math.max(form === FORMS.grubby ? 2 : 0, [0, 2, 4, 6][dirtLevel(p, st)]);
@@ -772,7 +776,9 @@ function toggleFocus(_e, sleeper = null) {
   } else {
     const got = [fishing.fish && `물고기 ${fishing.fish}마리`, fishing.trash && `쓰레기 ${fishing.trash}개`].filter(Boolean);
     const head = sleeper ? `${josa(sleeper.name, '이', '가')} 잠들어서 집중 모드를 끝냈어요` : '집중 모드 끝!';
-    toast(got.length ? `${head} 그동안 ${got.join(', ')}를 낚았어요` : sleeper ? head : `${head} 수고했어요`);
+    const fp = fisher() || sleeper;
+    const left = fp && !fp.angler && fishing.fish ? ` (낚시꾼까지 ${ANGLER_FISH - (fp.fishN || 0)}마리)` : '';
+    toast(got.length ? `${head} 그동안 ${got.join(', ')}를 낚았어요${left}` : sleeper ? head : `${head} 수고했어요`);
     stopFishing();
   }
   const p = focusPet();
@@ -1564,9 +1570,11 @@ const fisher = () => (fishing.id && state.pets.find((p) => p.id === fishing.id))
 const buddyVis = (a) => (a.id && visitors.find((x) => x.pet.id === a.id)) || null;
 const anglerPet = (a) => (a === fishing ? fisher() : (buddyVis(a) || {}).pet || null);
 
-function pickCatch() {
-  let r = Math.random() * CATCHES.reduce((s, c) => s + c.w, 0);
-  for (const c of CATCHES) if ((r -= c.w) <= 0) return c;
+// 낚시꾼은 큰 물고기가 두 배로 잘 걸리고 쓰레기는 절반만
+function pickCatch(angler = false) {
+  const w = (c) => (angler ? (c.sprite === 'fishBig' ? 2 : c.fish ? 1 : 0.5) : 1) * c.w;
+  let r = Math.random() * CATCHES.reduce((s, c) => s + w(c), 0);
+  for (const c of CATCHES) if ((r -= w(c)) <= 0) return c;
   return CATCHES[0];
 }
 
@@ -1635,7 +1643,7 @@ function stepAngler(a, p, dt) {
   if (a.t > 0) return;
   if (a.phase === 'cast') {
     a.phase = 'wait';
-    a.t = rand(12, 25);
+    a.t = p.angler ? rand(8, 16) : rand(12, 25);   // 낚시꾼은 입질이 빨리 온다
   } else if (a.phase === 'wait') {
     a.phase = 'bite';
     a.t = 1.2;
@@ -1644,7 +1652,7 @@ function stepAngler(a, p, dt) {
     // 휙! 낚아 올린다
     a.phase = 'reel';
     a.t = 0.9;
-    a.item = pickCatch();
+    a.item = pickCatch(p.angler);
     v.vy = -280; v.sv -= 2;
     emit(bobberX(a), floorY() - 8, 'drop', { n: 3, spread: 50, up: 120, gravity: 600 });
   } else if (a.phase === 'reel') {
@@ -1653,7 +1661,16 @@ function stepAngler(a, p, dt) {
     a.t = 1.6;
     const fish = a.item.fish;
     if (fish) a.fish++; else a.trash++;
-    if (fish && !p.visitor) runHooks('caught', a.item);
+    if (fish && !p.visitor) {
+      runHooks('caught', a.item);
+      p.fishN = (p.fishN || 0) + 1;
+      if (!p.angler && p.fishN >= ANGLER_FISH) {
+        p.angler = true;
+        setEmote(v, 'sparkle', 2.5);
+        toast(`${josa(p.name, '이', '가')} 물고기를 ${ANGLER_FISH}마리 낚아서 낚시꾼이 됐어요! 밀짚모자 획득`);
+        persist();
+      }
+    }
     if (!p.visitor) p.happy = clamp(p.happy + (fish ? 3 : -1), 0, 100);
     emit(v.x, v.y - 40, fish ? 'heart' : 'sadDrop', { n: fish ? 2 : 1, spread: 40, up: 100 });
     // 같이 낚시하는 친구들은 박수
@@ -2634,7 +2651,7 @@ function refreshCard() {
   const tend = form || st === 'egg' ? null
     : (p.dirtyH || 0) >= GRUBBY_H / 2 ? '꼬질쟁이'
     : n >= 3 ? TENDENCY[care] : null;
-  $('pStage').textContent = STAGES[st].label + (form ? ` · ${form.label}` : tend ? ` · ${tend}` : '');
+  $('pStage').textContent = STAGES[st].label + (form ? ` · ${form.label}` : tend ? ` · ${tend}` : '') + (p.angler ? ' · 낚시꾼' : '');
   runHooks('card', p);
   $('pAge').textContent = st === 'egg'
     ? `부화까지 ${Math.ceil((EGG_MS - age) / 1000)}초`
@@ -3142,7 +3159,7 @@ function connectFriends() {
 // 인사할 때 내 대표 말랑이 모습도 같이 보내서, 친구 화면에 바로 놀러 간다
 function myPetInfo() {
   const p = focusPet() || state.pets.find((x) => stageOf(x) !== 'egg');
-  return p ? { name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p) } : null;
+  return p ? looksOf(p) : null;
 }
 // 말랑이가 다 자고 있어도 앱이 켜져 있으면 온라인. 자는 중인지는 따로 알려 준다
 const mySleeping = () => state.pets.length > 0 && !focusPet();
@@ -3206,9 +3223,13 @@ function onData(conn, d) {
   else if (String(d.t).startsWith('r')) onRoomData(conn, f, d);
   if (d.t === 'shake') receiveShake(f);
   if (d.t === 'status') {
-    friendStatus.set(f.code, { focus: !!d.focus, sleeping: !!d.sleeping });
+    const pet = d.pet && typeof d.pet === 'object' ? d.pet : null;
+    friendStatus.set(f.code, { focus: !!d.focus, sleeping: !!d.sleeping, pet });
     const vis = visitors.find((x) => x.code === f.code);
-    if (vis) vis.pet.sleeping = !!d.sleeping;
+    if (vis) {
+      vis.pet.sleeping = !!d.sleeping;
+      if (pet) Object.assign(vis.pet, visitorLooks(pet));
+    }
     refreshFriends();
   }
   runHooks('data', conn, f, d);
@@ -3245,10 +3266,13 @@ function logNote(entry) {
   if (noteLog.length > 60) noteLog.shift();
 }
 
+// 상태에 내 대표 말랑이 모습도 실어 보낸다 (장비를 갈아입으면 친구 화면에도 바로)
 let statusKey = '';
+const statusNow = () => JSON.stringify([state.focus, mySleeping(), myPetInfo()]);
 function broadcastStatus() {
-  statusKey = `${state.focus}|${mySleeping()}`;
-  for (const c of conns.values()) if (c.open) c.send({ t: 'status', focus: state.focus, sleeping: mySleeping() });
+  statusKey = statusNow();
+  const pet = myPetInfo();
+  for (const c of conns.values()) if (c.open) c.send({ t: 'status', focus: state.focus, sleeping: mySleeping(), pet });
 }
 
 // 10초마다 살아 있다고 알리고, 45초 동안 아무 소식이 없으면 꺼진 걸로 본다
@@ -3257,7 +3281,7 @@ const lastSeen = new Map();
 let beatN = 0;
 function heartbeat() {
   stepRoom();
-  if (`${state.focus}|${mySleeping()}` !== statusKey) broadcastStatus();
+  if (statusNow() !== statusKey) broadcastStatus();
   if (++beatN % 10 !== 0) return;
   const now = Date.now();
   for (const [code, c] of [...conns]) {
@@ -3377,7 +3401,7 @@ function broadcastRoomRoster() {
     if (m.code === state.myCode) return myMember();
     const st = friendStatus.get(m.code) || {};
     const f = findFriend(m.code);
-    return { ...m, nick: f ? friendName(f) : m.nick, focus: !!st.focus, sleeping: !!st.sleeping };
+    return { ...m, nick: f ? friendName(f) : m.nick, pet: st.pet || m.pet, focus: !!st.focus, sleeping: !!st.sleeping };
   });
   const msg = { t: 'rroster', id: room.id, members: room.members };
   for (const m of roomOthers()) sendTo(m.code, msg);
@@ -3654,10 +3678,18 @@ function visitorLooks(info) {
     color: /^#[0-9A-Fa-f]{6}$/.test(String(info.color || '')) || RAINBOW_COLORS.includes(info.color) ? info.color : null,
     form: stage === 'adult' && Object.hasOwn(FORMS, String(info.form || '')) ? info.form : null,
     born: Date.now() - EGG_MS - { baby: 2, child: 30, adult: 80 }[stage] * HOUR,
+    gear: info.gear && typeof info.gear === 'object' ? { weapon: gearId(info.gear.weapon), armor: gearId(info.gear.armor) } : null,
+    angler: !!info.angler,
   };
 }
 const guestPet = (id, info) => ({ id, visitor: true, ...visitorLooks(info), hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] });
-const looksOf = (p) => ({ name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p) });
+// 친구 화면에 보낼 모습: 생김새 + 입은 장비 + 낚시꾼 모자
+const looksOf = (p) => ({
+  name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p),
+  gear: p.rpg && p.rpg.gear ? { weapon: p.rpg.gear.weapon || null, armor: p.rpg.gear.armor || null } : null,
+  angler: !!p.angler,
+});
+const gearId = (id) => (typeof id === 'string' && /^[A-Za-z]{1,20}$/.test(id) ? id : null);
 
 function visitorFor(code, nick, info) {
   let vis = visitors.find((x) => x.code === code);

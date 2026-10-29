@@ -405,7 +405,9 @@ function fight(p, zone, now, live) {
     while (r.exp >= expNeed(r.lv)) { r.exp -= expNeed(r.lv); r.lv++; res.levelUp = r.lv; r.hp = maxHp(p); }
     const luck = 1 + buffK(p, 'luck', now) + formK(p, 'luck') + 0.2 * (n - 1);
     for (const [item, v] of Object.entries(mob.drops)) {
-      const k = v >= 1 ? Math.round(v * luck) : Math.random() < Math.min(0.95, v * luck) ? 1 : 0;
+      // 낚시꾼은 물고기를 더 잘 잡는다
+      const lk = item === 'fish' && p.angler ? luck * 1.5 : luck;
+      const k = v >= 1 ? Math.round(v * lk) : Math.random() < Math.min(0.95, v * lk) ? 1 : 0;
       if (!k) continue;
       R.bag[item] = (R.bag[item] || 0) + k;
       a.loot[item] = (a.loot[item] || 0) + k;
@@ -1216,9 +1218,11 @@ function drawCloset(t, dt) {
 
 // 말랑이 몸에 갑옷을 입히고 무기를 쥐여 준다 (renderer.js의 drawPet이 부른다)
 hooks.dress.push((cells, p, d) => {
-  const g = p.rpg && p.rpg.gear;
+  // 친구네 말랑이는 친구가 보내 준 장비 (모르는 장비면 안 그린다)
+  const g = p.visitor ? p.gear : p.rpg && p.rpg.gear;
   if (!g || d.st === 'egg') return;
-  const armor = GEAR[g.armor], weapon = GEAR[g.weapon];
+  const armor = Object.hasOwn(GEAR, g.armor || '') && GEAR[g.armor].slot === 'armor' ? GEAR[g.armor] : null;
+  const weapon = Object.hasOwn(GEAR, g.weapon || '') && GEAR[g.weapon].slot === 'weapon' ? GEAR[g.weapon] : null;
   if (armor) {
     // 몸 아랫부분을 감싸는 띠 + 위쪽 테두리 + 징
     const [main, edge] = armor.look.map((k) => d.pal[PAL[k]]);

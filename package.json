@@ -1,6 +1,6 @@
 {
   "name": "malang-pet",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "바탕화면에서 도트 말랑이를 키우는 다마고치 같은 데스크톱 펫",
   "main": "main.js",
   "scripts": {
