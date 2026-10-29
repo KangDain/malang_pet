@@ -74,6 +74,7 @@ for (const [id, r] of Object.entries(RECIPES)) {
 const FORM_BONUS = {
   chubby: { hp: 0.2 }, sporty: { atk: 0.15 }, shiny: { luck: 0.3 }, sleepy: { stamina: 0.25 },
   royal: { hp: 0.1, atk: 0.1, luck: 0.1, stamina: 0.1 },
+  grubby: { hp: 0.1, luck: 0.2 },   // 흙바닥을 뒤지고 다녀서 재료를 잘 찾는다
 };
 
 // ---------- 지역 · 몬스터 ----------

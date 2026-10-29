@@ -81,14 +81,24 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
 @keyframes pop { from { transform: translateY(6px); } to { transform: none; } }
 
 /* 돌봄 카드 */
-#card { position: fixed; z-index: 10; width: 248px; padding: 9px 11px 11px; animation: pop .12s steps(2); }
+/* 글자가 길어지면 카드가 옆으로 늘어난다 (글자를 세로로 접거나 버튼을 자르지 않게) */
+#card {
+  position: fixed; z-index: 10;
+  width: max-content; min-width: 248px; max-width: 360px;
+  padding: 9px 11px 11px; animation: pop .12s steps(2);
+}
 .head { display: flex; align-items: center; gap: 6px; }
-#pName { font-weight: bold; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head > * { flex: none; white-space: nowrap; }
+#pName { flex: 0 1 auto; min-width: 0; font-weight: bold; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+#pStage { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.head .spacer { flex: 1 1 0; min-width: 4px; }
 .meta { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0 8px; color: var(--text_sub); }
+.meta > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta > span:first-child { flex: none; }
 
 .stats { display: grid; gap: 5px; }
 .stat { display: flex; align-items: center; gap: 8px; }
-.stat > span { width: 40px; color: var(--text_sub); }
+.stat > span { width: 40px; flex: none; white-space: nowrap; color: var(--text_sub); }
 .gauge {
   flex: 1; display: flex; gap: 2px; padding: 2px;
   background: var(--border);
@@ -96,7 +106,7 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
 .gauge i { flex: 1; height: 7px; background: var(--gauge_empty); }
 
 .actions { display: flex; gap: 6px; margin-top: 11px; }
-.actions .btn { flex: 1; flex-direction: column; gap: 1px; padding: 4px 0 5px; font-size: 11px; }
+.actions .btn { flex: 1; flex-direction: column; gap: 1px; padding: 4px 4px 5px; font-size: 11px; white-space: nowrap; }
 .ico { display: block; }
 
 /* 말랑이네 집 창 */
@@ -157,9 +167,9 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
 .buttons { margin-top: 16px; }
 
 /* 말랑이 색깔 견본 — 그 색 말랑이가 들어 있다 */
-#mColors { gap: 4px; justify-content: space-between; }
+#mColors { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
 .swatch {
-  position: relative; width: 30px; height: 38px; flex: none;
+  position: relative; width: 100%; height: 38px;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
 }

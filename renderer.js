@@ -45,7 +45,10 @@ const FORMS = {
   shiny:  { label: '반짝이', dr: 0, dh: 0 },
   sleepy: { label: '느긋이', dr: 1, dh: -2 },
   royal:  { label: '으뜸이', dr: 0, dh: 1 },
+  grubby: { label: '꼬질이', dr: 1, dh: 0 },
 };
+// 아기·어린이 때 꼬질한 채로 이만큼(시간) 지내면 어른 꼬질이가 된다
+const GRUBBY_H = 8;
 const CARE_FORM = { feed: 'chubby', play: 'sporty', clean: 'shiny', sleep: 'sleepy' };
 const TENDENCY = { feed: '먹보', play: '개구쟁이', clean: '깔끔쟁이', sleep: '잠꾸러기' };
 const formOf = (p, st) => (st === 'adult' && Object.hasOwn(FORMS, p.form || '') ? FORMS[p.form] : null);
@@ -62,6 +65,8 @@ function decideForm(p) {
   const c = p.care || {};
   // 한 번도 안 아프고 골고루 돌봐 주면 으뜸이
   if (!p.sickCount && ['feed', 'play', 'clean'].every((k) => (c[k] || 0) >= 5)) return 'royal';
+  // 잘 못 씻겨서 꼬질한 채로 오래 지냈으면 꼬질이
+  if ((p.dirtyH || 0) >= GRUBBY_H) return 'grubby';
   const [k, n] = topCare(p);
   return n > 0 ? CARE_FORM[k] : 'sleepy';
 }
@@ -239,6 +244,24 @@ function darken(hex, k) {
   return '#' + ch(16) + ch(8) + ch(0);
 }
 
+// 무지개 말랑이: 'rainbow'는 위에서 아래로 무지개 줄무늬 고정,
+// 'aurora'는 온몸 빛깔이 은은하게 무지개색으로 천천히 돈다
+const RAINBOW = ['#F2A7B8', '#F4B98A', '#F3D97B', '#A9DDA0', '#8EC5E8', '#B9A3E3'];
+const RAINBOW_COLORS = ['rainbow', 'aurora'];
+function hslHex(h, s, l) {
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const v = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(v * 255).toString(16).padStart(2, '0');
+  };
+  return '#' + f(0) + f(8) + f(4);
+}
+// 몸 높이 fy(0=꼭대기, 1=바닥)에서의 무지개 색
+function rainbowAt(color, fy, t) {
+  if (color === 'rainbow') return RAINBOW[Math.min(RAINBOW.length - 1, Math.floor(fy * RAINBOW.length))];
+  return hslHex((t * 20 + fy * 50) % 360, 0.68, 0.77);
+}
+
 // 받침 유무에 따라 조사를 붙인다: josa('모찌', '이', '가') → '모찌가'
 function josa(word, withBatchim, withoutBatchim) {
   const code = word.charCodeAt(word.length - 1);
@@ -293,7 +316,7 @@ function newPet(name, sprout, color = null) {
   return {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     name, sprout,
-    color,      // 몸 색 (#RRGGBB, null이면 테마 기본색)
+    color,      // 몸 색 (#RRGGBB · rainbow · aurora, null이면 테마 기본색)
     born: Date.now(),
     hunger: 80, happy: 80, clean: 100, energy: 90,
     sleeping: false, sick: false,
@@ -318,7 +341,9 @@ function clampStats(p) {
 }
 
 function moodOf(p) {
-  const m = Math.min(p.hunger, p.happy, p.clean + 10, p.energy + 10);
+  // 꼬질이는 꼬질해도 기분이 상하지 않는다
+  const clean = formOf(p, stageOf(p)) === FORMS.grubby ? 100 : p.clean;
+  const m = Math.min(p.hunger, p.happy, clean + 10, p.energy + 10);
   if (p.sick || m < 25) return 'sad';
   if (m < 55) return 'meh';
   return 'happy';
@@ -454,11 +479,20 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
   const hw = Math.max(3, Math.round(r * (1 + sq * 0.9)));   // 절반 너비
   const hh = Math.max(3, Math.round(h * (1 - sq)));         // 높이
 
-  let body = p.sick ? T.text_sub : p.color || T.pet;
-  if (!p.sick && dirtLevel(p, st) >= 3) body = darken(body, 0.88);   // 아주 꼬질하면 몸빛이 탁해진다
-  const shade = p.sick ? T.border : p.color ? darken(p.color, 0.8) : T.leaf;
+  const rainbow = !p.sick && RAINBOW_COLORS.includes(p.color);
+  const base = rainbow ? rainbowAt(p.color, 0.5, t) : p.color;   // 무지개는 몸 가운데 색이 대표색
+  const dim = !p.sick && dirtLevel(p, st) >= 3;                     // 아주 꼬질하면 몸빛이 탁해진다
+  let body = p.sick ? T.text_sub : base || T.pet;
+  if (dim) body = darken(body, 0.88);
+  const shade = p.sick ? T.border : base ? darken(base, 0.8) : T.leaf;
   // 몸 색을 바꾼 말랑이는 새싹도 같은 계열 색으로
-  const pal = p.color && !p.sick ? { ...T, leaf: darken(p.color, 0.68) } : T;
+  const pal = base && !p.sick ? { ...T, leaf: darken(base, 0.68) } : T;
+  // 무지개 말랑이는 줄마다 색이 다르다
+  const rowColor = (y) => {
+    if (!rainbow) return body;
+    const c = rainbowAt(p.color, y / hh, t);
+    return dim ? darken(c, 0.88) : c;
+  };
   const cells = new Cells();
   // 슬라임 모양: 위는 둥근 돔, 옆은 곧게, 바닥은 평평. 몸 가운데는 x=-1과 0 사이
   const dome = Math.max(2, Math.round(hh * 0.6));
@@ -470,7 +504,8 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
       w = Math.max(1, Math.round(hw * (1 - d ** 2.5) ** 0.4));
     }
     if (y === hh - 1) w -= 1;              // 바닥 모서리만 살짝 둥글게
-    for (let x = -w; x < w; x++) cells.set(x, y - hh, y >= hh - 2 ? shade : body);
+    const row = y >= hh - 2 ? (rainbow ? darken(rowColor(y), 0.8) : shade) : rowColor(y);
+    for (let x = -w; x < w; x++) cells.set(x, y - hh, row);
   }
   // 오른쪽 위 광택
   const shine = (x, y) => { if (cells.has(x, y)) cells.set(x, y, T.shine); };
@@ -480,10 +515,11 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
   if (form === FORMS.shiny) { shine(-b - 1, 3 - hh); shine(-b, 4 - hh); shine(b + 1, 4 - hh); }
   if (form === FORMS.royal) stamp(cells, SPR.crown, 0, -hh, pal);
   // 안 씻기면 꼬질꼬질: 몸에 얼룩이 하나둘 생긴다
-  const spots = [0, 2, 4, 6][dirtLevel(p, st)];
-  const mud = darken(body, 0.62);
+  // 꼬질이는 씻겨도 볼에 얼룩 두 점이 남는다 (트레이드마크)
+  const spots = Math.max(form === FORMS.grubby ? 2 : 0, [0, 2, 4, 6][dirtLevel(p, st)]);
   for (const [fx, fy] of DIRT_SPOTS.slice(0, spots)) {
     const x = Math.round(fx * hw), y = Math.round(fy * hh) - hh;
+    const mud = darken(rowColor(y + hh), 0.62);
     if (cells.has(x, y)) cells.set(x, y, mud);
     if (cells.has(x + 1, y)) cells.set(x + 1, y, mud);
   }
@@ -764,8 +800,14 @@ const pendingEvents = [];
 
 // dtH: 흐른 시간(시간 단위)
 function simulate(p, dtH, now) {
-  if (stageOf(p, now) === 'egg') return;
+  const st = stageOf(p, now);
+  if (st === 'egg') return;
   const sickMul = p.sick ? 1.5 : 1;
+  // 꼬질이는 씻겨도 금방 다시 꼬질해지지만, 꼬질한 게 편해서 그걸로는 아프지 않다
+  const grubby = formOf(p, st) === FORMS.grubby;
+  const dirtMul = grubby ? 1.5 : 1;
+  // 아기·어린이 때 꼬질하게 지낸 시간 → 어른 꼬질이
+  if (st !== 'adult' && p.clean < 30) p.dirtyH = (p.dirtyH || 0) + dtH;
   const night = isNight(now);
 
   if (p.sleeping) {
@@ -773,7 +815,7 @@ function simulate(p, dtH, now) {
     const cozy = sleepBuddy(p);
     p.hunger -= 5 * dtH;
     p.happy -= (cozy ? 0 : 2) * dtH;
-    p.clean -= 3 * dtH;
+    p.clean -= 3 * dtH * dirtMul;
     p.energy += 30 * dtH * (cozy ? 1.3 : 1);
     // 밤에는 기운이 다 차도 아침까지 자고, 아침엔 웬만큼 찼으면 일어난다
     const morning = isMorning(now) && p.energy >= 70 && now - (p.sleptAt || 0) > HOUR;
@@ -785,7 +827,7 @@ function simulate(p, dtH, now) {
   } else {
     p.hunger -= 16 * dtH * sickMul;
     p.happy -= 10 * dtH * sickMul;
-    p.clean -= 12 * dtH;
+    p.clean -= 12 * dtH * dirtMul;
     p.energy -= 9 * dtH * (night ? 1.6 : 1);
     if (p.energy <= 0) {
       p.sleeping = true;
@@ -820,7 +862,7 @@ function simulate(p, dtH, now) {
 
   // 배고프거나 더러운 상태가 오래가면 아프다
   if (!p.sick) {
-    if (p.hunger < 10 || p.clean < 10) {
+    if (p.hunger < 10 || (p.clean < 10 && !grubby)) {
       p.sickMeter += dtH;
       if (p.sickMeter > 1.5) {
         p.sick = true;
@@ -1073,7 +1115,7 @@ function needSpeech(p) {
   if (p.sick) return talk('sick');
   if (p.hunger < 30) return talk('hungry');
   if (p.poops.length >= 2) return '응가 치워 줘!';
-  if (p.clean < 30) return talk('dirty');
+  if (p.clean < 30) return formOf(p, stageOf(p)) === FORMS.grubby ? pick(['꼬질꼬질 좋아~', '흙냄새 최고!', '씻는 건 싫어..']) : talk('dirty');
   if (p.energy < 25) return talk('sleepy');
   if (p.happy < 30) return talk('bored');
   return null;
@@ -2567,7 +2609,10 @@ function refreshCard() {
   $('pName').textContent = p.name;
   const form = formOf(p, st);
   const [care, n] = topCare(p);
-  const tend = !form && st !== 'egg' && n >= 3 ? TENDENCY[care] : null;
+  // 꼬질하게 오래 지내면 어른 꼬질이가 될 낌새가 보인다
+  const tend = form || st === 'egg' ? null
+    : (p.dirtyH || 0) >= GRUBBY_H / 2 ? '꼬질쟁이'
+    : n >= 3 ? TENDENCY[care] : null;
   $('pStage').textContent = STAGES[st].label + (form ? ` · ${form.label}` : tend ? ` · ${tend}` : '');
   runHooks('card', p);
   $('pAge').textContent = st === 'egg'
@@ -2785,27 +2830,28 @@ function setModalColor(color) {
   document.querySelectorAll('#mColors .swatch').forEach((b) => b.classList.toggle('on', b === (preset || custom)));
   // 견본에 없는 색이면 '직접 고르기' 칸의 말랑이가 그 색이 된다
   if (!preset) custom.dataset.custom = modalColor;
-  $('mColorPick').value = (modalColor || T.pet).toLowerCase();
+  $('mColorPick').value = (RAINBOW_COLORS.includes(modalColor) ? T.pet : modalColor || T.pet).toLowerCase();
   renderSwatches();
   previewView.sv += 2;
 }
 
 // 색 견본마다 그 색 아기 말랑이를 그린다
+function renderSwatch(b, t = 0) {
+  let cv = b.querySelector('canvas');
+  if (!cv) {
+    cv = document.createElement('canvas');
+    cv.width = 26; cv.height = 34;
+    b.append(cv);
+  }
+  const color = b.classList.contains('custom') ? b.dataset.custom || T.bg : b.dataset.color || null;
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, cv.width, cv.height);
+  const fake = { sprout: 'twin', color, form: null, hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
+  const v = { x: 13, y: 32, s: 0, face: 0, wob: 0, blink: 0, squint: 0, eatT: 0, playT: 0, held: false };
+  drawPet(c, fake, v, 'baby', t, 32, 2);
+}
 function renderSwatches() {
-  document.querySelectorAll('#mColors .swatch').forEach((b) => {
-    let cv = b.querySelector('canvas');
-    if (!cv) {
-      cv = document.createElement('canvas');
-      cv.width = 26; cv.height = 34;
-      b.append(cv);
-    }
-    const color = b.classList.contains('custom') ? b.dataset.custom || T.bg : b.dataset.color || null;
-    const c = cv.getContext('2d');
-    c.clearRect(0, 0, cv.width, cv.height);
-    const fake = { sprout: 'twin', color, form: null, hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] };
-    const v = { x: 13, y: 32, s: 0, face: 0, wob: 0, blink: 0, squint: 0, eatT: 0, playT: 0, held: false };
-    drawPet(c, fake, v, 'baby', 0, 32, 2);
-  });
+  document.querySelectorAll('#mColors .swatch').forEach((b) => renderSwatch(b));
 }
 
 function openModal(mode) {
@@ -2903,6 +2949,8 @@ function drawPreview(t) {
   if (v.blinkT <= 0) { v.blink = 0.15; v.blinkT = rand(2, 4); }
   v.blink = Math.max(0, v.blink - 1 / 60);
   drawPet(c, fake, v, 'child', t, 116, 6);
+  // 무지갯빛 견본은 색이 도는 모습을 보여 준다
+  renderSwatch(document.querySelector('#mColors .swatch[data-color="aurora"]'), t);
 }
 
 mOk.addEventListener('click', confirmModal);
@@ -3582,7 +3630,7 @@ function visitorLooks(info) {
   return {
     name: cleanText(info.name, 10) || '말랑이',
     sprout: SPROUTS.includes(info.sprout) ? info.sprout : 'twin',
-    color: /^#[0-9A-Fa-f]{6}$/.test(String(info.color || '')) ? info.color : null,
+    color: /^#[0-9A-Fa-f]{6}$/.test(String(info.color || '')) || RAINBOW_COLORS.includes(info.color) ? info.color : null,
     form: stage === 'adult' && Object.hasOwn(FORMS, String(info.form || '')) ? info.form : null,
     born: Date.now() - EGG_MS - { baby: 2, child: 30, adult: 80 }[stage] * HOUR,
   };
