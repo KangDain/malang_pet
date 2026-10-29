@@ -121,6 +121,7 @@ const SPR = {
   focus:    ['    ww', '   hww', '  hhh ', ' hhh  ', 'Bhh   ', 'BB    '],
   photo:    ['  sss  ', 'sssssss', 'ssscsss', 'sscbcss', 'ssscsss', 'sssssss'],
   sword:    ['     b', '    bb', '   bb ', 'tbbb  ', ' tt   ', 't  t  '],
+  hanger:   ['   s   ', '  s s  ', '    s  ', '   s   ', '  sss  ', ' s   s ', 'sssssss'],
   // 집 창 제목 줄 아이콘 (표지 고정 · 표지 보이기)
   lock:     [' sss ', 's   s', 's   s', 'hhhhh', 'hhBhh', 'hhBhh', 'hhhhh'],
   unlock:   ['   sss', '   s s', '   s  ', 'hhhhh ', 'hhBhh ', 'hhBhh ', 'hhhhh '],
@@ -226,7 +227,8 @@ const snap = (v, px) => Math.round(v / px) * px;
 const $ = (id) => document.getElementById(id);
 
 // 다른 파일(rpg.js)이 끼어드는 자리: 매 프레임 · 1초마다 · 친구 메시지 · 먹었을 때 · 돌봄 카드 · 낚시
-const hooks = { frame: [], tick: [], data: [], eat: [], card: [], caught: [] };
+// · 말랑이 옷 입히기 · 방 안 옷장을 눌렀을 때
+const hooks = { frame: [], tick: [], data: [], eat: [], card: [], caught: [], dress: [], wardrobe: [] };
 const runHooks = (name, ...args) => { for (const h of hooks[name]) h(...args); };
 // 모험 가 있는 말랑이 (state.pets에서 빠져 있다가 돌아온다)
 const awayPets = () => (state.rpg && state.rpg.away) || [];
@@ -527,6 +529,8 @@ function drawPet(c, p, v, st, t, groundY, px = PX) {
   // 머리 위에 둥실 떠 있는 새싹
   const bob = v.held ? 0 : Math.sin(t * 3 + v.wob) > 0 ? 0 : 1;
   stamp(cells, SPR[p.sprout] || SPR.twin, 0, -hh - 4 - bob, pal);
+  // 입고 있는 갑옷 · 들고 있는 무기 (rpg.js)
+  runHooks('dress', cells, p, { hw, hh, st, pal, face: v.face });
 
   cells.outline(T.outline);
 
@@ -2100,6 +2104,7 @@ const roomCtx = roomCanvas.getContext('2d');
 const RW = roomCanvas.width, RH = roomCanvas.height;
 const ROOM_FLOOR = 118;        // 방 안 말랑이 발 위치
 const BED_TOP = 96;
+const WARDROBE = { x: 158, y: 58, w: 26, h: 42 };   // 방 안 옷장 (바닥 102에 선다)
 const roomViews = new Map();   // 방 안 말랑이 움직임 (바탕화면과 따로 논다)
 let homePos = null;            // 제목줄을 끌어서 옮긴 위치
 let uiDrag = false;
@@ -2430,6 +2435,20 @@ function drawRoomBg(c, t, dt, kind, sky) {
   rectO(c, 132, 114, 20, 6, T.pot);
   c.fillStyle = T.hunger;
   c.fillRect(134, 110, 16, 4);
+  // 옷장 (누르면 장비를 갈아입힌다)
+  const { x: wx, y: wy, w: ww, h: wh } = WARDROBE;
+  rectO(c, wx - 2, wy - 4, ww + 4, 2, T.border);
+  rectO(c, wx, wy, ww, wh, T.pot);
+  c.fillStyle = T.floor_grain;
+  c.fillRect(wx + ww / 2 - 1, wy + 3, 2, wh - 6);
+  c.fillRect(wx + 3, wy + 3, ww / 2 - 6, 2);
+  c.fillRect(wx + ww / 2 + 3, wy + 3, ww / 2 - 6, 2);
+  c.fillStyle = T.hunger;
+  c.fillRect(wx + ww / 2 - 5, wy + wh / 2 - 2, 2, 4);
+  c.fillRect(wx + ww / 2 + 3, wy + wh / 2 - 2, 2, 4);
+  c.fillStyle = T.outline;
+  c.fillRect(wx + 1, wy + wh, 3, 2);
+  c.fillRect(wx + ww - 4, wy + wh, 3, 2);
   // 침대: 머리판 · 매트리스 · 베개
   rectO(c, 192, 70, 6, 46, T.pot);
   rectO(c, 192, 70, 6, 4, T.border);
@@ -2571,6 +2590,8 @@ roomCanvas.addEventListener('pointerdown', (e) => {
       return;
     }
   }
+  const { x, y, w, h } = WARDROBE;
+  if (pt.x >= x - 2 && pt.x <= x + w + 2 && pt.y >= y - 4 && pt.y <= y + h + 2) runHooks('wardrobe');
 });
 
 // 제목줄을 끌어서 창 옮기기

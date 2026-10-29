@@ -68,6 +68,7 @@
     </div>
     <div class="home-actions">
       <button class="btn" id="hAdv"><canvas class="ico" data-icon="sword"></canvas><span>모험 · 요리</span></button>
+      <button class="btn" id="hCloset"><canvas class="ico" data-icon="hanger"></canvas><span>옷장</span></button>
       <button class="btn warn" id="hQuit" title="말랑이 키우기를 꺼요 (바탕화면 바로가기로 다시 켤 수 있어요)">끄기</button>
     </div>
   </div>
@@ -107,6 +108,27 @@
       <div class="field"><span>가방</span><div id="advBag" class="bag"></div></div>
       <div class="field"><span>요리하기</span><div id="advRecipes" class="recipes"></div></div>
       <div class="field"><span>만든 요리 (모험 중이면 도시락으로)</span><div id="advDishes" class="recipes"></div></div>
+    </div>
+  </div>
+
+  <!-- 옷장: 모험에서 주운 무기 · 갑옷을 입히고 벗긴다 (레벨 · 탐험한 지역 조건) -->
+  <div id="closet" class="ui box" hidden>
+    <div id="closetBar" class="titlebar">
+      <canvas class="ico" data-icon="hanger"></canvas>
+      <span class="name">옷장</span>
+      <span id="closetSub" class="sub"></span>
+      <span class="spacer"></span>
+      <button id="closetClose" class="link">닫기</button>
+    </div>
+    <canvas id="closetScene" width="276" height="84"></canvas>
+    <label class="field">
+      <span>입힐 말랑이</span>
+      <select id="closetPet" class="input"></select>
+    </label>
+    <div id="closetWear" class="adv-info"></div>
+    <div class="field">
+      <span>장비 — 레벨과 탐험한 지역이 조건에 맞아야 입을 수 있어요</span>
+      <div id="closetList" class="recipes"></div>
     </div>
   </div>
 

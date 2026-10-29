@@ -102,6 +102,47 @@ const ZONES = [
     boss: { name: '돌골렘', sprite: 'golem', hp: 720, atk: 26, exp: 380, drops: { potato: 5, honey: 2 } } },
 ];
 const zoneOf = (id) => ZONES.find((z) => z.id === id) || ZONES[0];
+const EXPLORE = 30;   // 한 지역에서 이만큼 물리치면 그 지역 탐험 완료
+
+// ---------- 장비 (무기: 칼 · 활 / 갑옷) ----------
+// 단계마다 그 지역에서 주울 수 있고, 입으려면 레벨 + 앞 지역 탐험 완료가 필요하다.
+// 별빛 장비는 반짝 동굴에서 아주 드물게 나오고, 동굴까지 탐험해야 입을 수 있다.
+// blade: 칼날 · 활대 색, guard: 칼 손잡이 색, look: 갑옷 [바탕, 무늬] 색 (SPR 글자)
+const GEAR_TIERS = [
+  { key: 'wood', zone: 'meadow', lv: 1, need: null, sword: '나무 칼', bow: '나무 활', armor: '나뭇잎 옷', blade: 'g', guard: 't', look: ['l', 'f'] },
+  { key: 'stone', zone: 'forest', lv: 4, need: 'meadow', sword: '돌 칼', bow: '덩굴 활', armor: '버섯 갑옷', blade: 's', guard: 'l', look: ['w', 'b'] },
+  { key: 'iron', zone: 'farm', lv: 7, need: 'forest', sword: '쇠 칼', bow: '깃털 활', armor: '가죽 갑옷', blade: 'b', guard: 'B', look: ['t', 'h'] },
+  { key: 'coral', zone: 'beach', lv: 10, need: 'farm', sword: '산호 칼', bow: '조개 활', armor: '조개 갑옷', blade: 'w', guard: 'c', look: ['c', 'b'] },
+  { key: 'crystal', zone: 'cave', lv: 14, need: 'beach', sword: '수정 칼', bow: '수정 활', armor: '수정 갑옷', blade: 'c', guard: 'h', look: ['c', 'h'] },
+  { key: 'star', zone: 'cave', lv: 18, need: 'cave', sword: '별빛 칼', bow: '별빛 활', armor: '별빛 갑옷', blade: 'h', guard: 'w', look: ['h', 'w'], rare: true },
+];
+const SWORD_ATK = [3, 5, 8, 11, 14, 18];
+const BOW_ATK = [2, 4, 6, 8, 10, 13];
+const BOW_DEF = 0.15;   // 활은 멀리서 쏴서 덜 맞는다
+const ARMOR_DEF = [0.05, 0.08, 0.11, 0.14, 0.17, 0.2];
+const ARMOR_HP = [4, 8, 14, 20, 28, 36];
+const GEAR = {};
+const paint = (rows, map) => rows.map((row) => row.replace(/[XGAa]/g, (ch) => map[ch]));
+const mirror = (rows) => rows.map((row) => [...row].reverse().join(''));
+GEAR_TIERS.forEach((g, i) => {
+  const base = { tier: i, zone: g.zone, lv: g.lv, need: g.need, rare: !!g.rare };
+  const add = (id, gear, rows) => {
+    GEAR[id] = { ...base, ...gear, sprite: 'gear_' + id };
+    SPR['gear_' + id] = rows;
+    SPR['gear_' + id + 'L'] = mirror(rows);
+  };
+  add(g.key + 'Sword', { name: g.sword, slot: 'weapon', kind: 'sword', atk: SWORD_ATK[i] },
+    paint([' X ', ' X ', ' X ', ' X ', 'GGG', ' t '], { X: g.blade, G: g.guard }));
+  add(g.key + 'Bow', { name: g.bow, slot: 'weapon', kind: 'bow', atk: BOW_ATK[i], def: BOW_DEF },
+    paint([' X ', 'X s', 'X s', 'X s', 'X s', ' X '], { X: g.blade }));
+  add(g.key + 'Armor', { name: g.armor, slot: 'armor', kind: 'armor', def: ARMOR_DEF[i], hp: ARMOR_HP[i], look: g.look },
+    paint(['AA AA', 'AAAAA', 'AaAaA', 'AAAAA', ' AAA '], { A: g.look[0], a: g.look[1] }));
+});
+const SLOT_NAME = { weapon: '무기', armor: '갑옷' };
+function gearText(g) {
+  if (g.kind === 'armor') return `체력 +${g.hp} · 받는 피해 -${Math.round(g.def * 100)}%`;
+  return `공격 +${g.atk}` + (g.kind === 'bow' ? ` · 받는 피해 -${Math.round(g.def * 100)}%` : '');
+}
 const WAVE_MS = 30000;         // 한 번 싸우는 간격 (한 시간에 120번)
 const BOSS_EVERY = 8;          // 파티면 여덟 번째 싸움마다 보스
 const MAX_BACKLOG = 12 * HOUR; // 꺼져 있던 시간은 12시간까지만 계산
@@ -115,10 +156,24 @@ R.away = Array.isArray(R.away) ? R.away : [];
 R.adv = R.adv || null;       // 모험 중: { petId, zone, next, start, wave, kills, bosses, loot, party: { id, host } }
 R.host = R.host || null;     // 내가 파티장일 때 { id, zone }
 R.lastZone = R.lastZone || 'meadow';
+R.gear = R.gear && typeof R.gear === 'object' ? R.gear : {};   // 옷장: 장비 id → 가진 개수 (입은 것 포함)
+if (!R.gearStart) {
+  // 처음 옷장을 여는 집에는 연습용 칼과 활이 하나씩 있다
+  R.gearStart = true;
+  R.gear.woodSword = (R.gear.woodSword || 0) + 1;
+  R.gear.woodBow = (R.gear.woodBow || 0) + 1;
+}
 
 function rpgOf(p) {
   if (!p.rpg) p.rpg = { lv: 1, exp: 0, hp: null, buff: null };
-  return p.rpg;
+  const r = p.rpg;
+  if (!r.gear) r.gear = { weapon: null, armor: null };
+  if (!r.zones) {
+    // 지역별 물리친 수. 예전 말랑이는 레벨로 보아 이미 지나온 지역을 탐험한 셈 친다
+    r.zones = {};
+    ZONES.forEach((z, i) => { if (ZONES[i + 1] && r.lv >= ZONES[i + 1].minLv) r.zones[z.id] = EXPLORE; });
+  }
+  return r;
 }
 const expNeed = (lv) => Math.round(15 * Math.pow(lv, 1.6));
 const formK = (p, k) => (FORM_BONUS[p.form] || {})[k] || 0;
@@ -127,11 +182,31 @@ function buffK(p, k, now = Date.now()) {
   if (!b || b.until <= now) return 0;
   return b.id === k ? BUFF_POWER[k] : b.id === 'all' ? 0.15 : 0;
 }
-const maxHp = (p) => Math.round((30 + 9 * rpgOf(p).lv) * (1 + formK(p, 'hp')));
-const atkOf = (p, now) => (4 + 2.2 * rpgOf(p).lv) * (1 + formK(p, 'atk') + buffK(p, 'atk', now));
+// 입고 있는 장비
+const worn = (p, slot) => GEAR[rpgOf(p).gear[slot]] || null;
+const gearAtk = (p) => (worn(p, 'weapon') || {}).atk || 0;
+const gearHp = (p) => (worn(p, 'armor') || {}).hp || 0;
+const gearDef = (p) => 1 - (1 - ((worn(p, 'armor') || {}).def || 0)) * (1 - ((worn(p, 'weapon') || {}).def || 0));
+const maxHp = (p) => Math.round((30 + 9 * rpgOf(p).lv + gearHp(p)) * (1 + formK(p, 'hp')));
+const atkOf = (p, now) => (4 + 2.2 * rpgOf(p).lv + gearAtk(p)) * (1 + formK(p, 'atk') + buffK(p, 'atk', now));
 const atkOfLv = (lv) => 4 + 2.2 * lv;   // 친구 말랑이는 레벨만 안다
 const awayPet = () => (R.adv && R.away.find((p) => p.id === R.adv.petId)) || null;
-const itemName = (k) => (ITEMS[k] || { name: k }).name;
+const itemName = (k) => (ITEMS[k] || GEAR[k] || { name: k }).name;
+
+// 탐험 · 장비 조건
+const explored = (p, zoneId) => (rpgOf(p).zones[zoneId] || 0) >= EXPLORE;
+const gearLack = (p, g) => ({ lv: rpgOf(p).lv < g.lv, zone: !!g.need && !explored(p, g.need) });
+const canWear = (p, g) => { const l = gearLack(p, g); return !l.lv && !l.zone; };
+const wornCount = (id) => [...state.pets, ...R.away].filter((p) => p.rpg && p.rpg.gear && (p.rpg.gear.weapon === id || p.rpg.gear.armor === id)).length;
+const freeCount = (id) => (R.gear[id] || 0) - wornCount(id);
+
+// 이긴 싸움에서 가끔 장비를 줍는다 (보스는 자주). 식구 수만큼 모이면 그 장비는 더 안 나온다
+function rollGear(zone, boss, luck) {
+  if (Math.random() >= Math.min(0.9, (boss ? 0.35 : 0.012) * luck)) return null;
+  const pool = Object.keys(GEAR).filter((id) => GEAR[id].zone === zone.id && (R.gear[id] || 0) < MAX_PETS)
+    .flatMap((id) => Array(GEAR[id].rare ? 1 : 4).fill(id));
+  return pool.length ? pick(pool) : null;
+}
 const lootText = (loot) => Object.entries(loot || {}).map(([k, n]) => `${itemName(k)} ${n}`).join(', ') || '빈손';
 
 // 모험 갈 수 있는지 (안 되면 이유)
@@ -314,7 +389,7 @@ function fight(p, zone, now, live) {
   const mobHp = mob.hp * (boss ? n : 1);
   const atk = atkOf(p, now) + team.reduce((s, m) => s + atkOfLv(m.lv), 0);
   const rounds = Math.max(1, Math.ceil(mobHp / atk));
-  const def = buffK(p, 'def', now);
+  const def = 1 - (1 - buffK(p, 'def', now)) * (1 - gearDef(p));
   let dmg = 0;
   // 보스는 파티원이 나눠 맞는다
   for (let i = 1; i < rounds; i++) dmg += mob.atk * rand(0.6, 1) * (1 - def) / (boss ? n : 1);
@@ -336,6 +411,15 @@ function fight(p, zone, now, live) {
       a.loot[item] = (a.loot[item] || 0) + k;
       res.loot[item] = k;
     }
+    res.gear = rollGear(zone, boss, luck);
+    if (res.gear) {
+      R.gear[res.gear] = (R.gear[res.gear] || 0) + 1;
+      a.loot[res.gear] = (a.loot[res.gear] || 0) + 1;
+      toast(`${josa(p.name, '이', '가')} ${josa(GEAR[res.gear].name, '을', '를')} 주웠어요! 옷장에 넣어 뒀어요`);
+    }
+    // 이 지역을 얼마나 다녔는지 → 장비 조건
+    r.zones[zone.id] = (r.zones[zone.id] || 0) + 1;
+    if (r.zones[zone.id] === EXPLORE) toast(`${josa(p.name, '이', '가')} ${zone.name} 탐험을 마쳤어요! 새 장비를 입을 수 있을지도`);
     a.kills++;
     if (boss) a.bosses++;
     r.hp = Math.min(maxHp(p), r.hp + Math.round(maxHp(p) * 0.08));
@@ -517,7 +601,9 @@ function refreshAdv(force = false) {
     row2.append(el('span', 'sub', '경험치'), bar(r.exp / expNeed(r.lv), 'exp'), el('span', 'sub', `배 ${Math.round(p.hunger)} · 기운 ${Math.round(p.energy)}`));
     const left = Math.max(0, Math.ceil((a.next - Date.now()) / 1000));
     const b = r.buff && r.buff.until > Date.now() ? ` · ${BUFFS[r.buff.id]} ${Math.ceil((r.buff.until - Date.now()) / 60000)}분` : '';
-    const row3 = el('div', 'sub', `${a.kills}마리${a.bosses ? ` (보스 ${a.bosses})` : ''} · ${lootText(a.loot)} · 다음 ${left}초${b}`);
+    const k = r.zones[a.zone] || 0;
+    const ex = k < EXPLORE ? ` · 탐험 ${k}/${EXPLORE}` : '';
+    const row3 = el('div', 'sub', `${a.kills}마리${a.bosses ? ` (보스 ${a.bosses})` : ''} · ${lootText(a.loot)}${ex} · 다음 ${left}초${b}`);
     info.append(row1, row2, row3);
   }
   $('advReady').hidden = !!p;
@@ -549,8 +635,11 @@ function refreshAdv(force = false) {
   const lv = cur ? rpgOf(cur).lv : 1;
   $('advZones').replaceChildren(...ZONES.map((z) => {
     const locked = lv < z.minLv;
+    const k = cur ? rpgOf(cur).zones[z.id] || 0 : 0;
     const b = button('', () => { selZone = z.id; refreshAdv(true); }, 'btn' + (z.id === selZone ? ' on' : ''), locked);
-    b.append(icon(z.mobs[0].sprite), el('span', null, z.name), el('span', 'sub', locked ? `Lv.${z.minLv}부터` : `Lv.${z.minLv}+`));
+    b.append(icon(z.mobs[0].sprite), el('span', null, z.name),
+      el('span', 'sub', locked ? `Lv.${z.minLv}부터` : k >= EXPLORE ? '탐험 끝' : `${k}/${EXPLORE}`));
+    b.title = locked ? '' : `탐험: 여기서 ${EXPLORE}마리를 물리치면 완료 (장비 조건)`;
     return b;
   }));
   $('advGo').disabled = !cur || lv < zoneOf(selZone).minLv;
@@ -703,12 +792,14 @@ function drawScene(t, dt) {
   const hits = f ? Math.min(f.res.rounds, 4) : 0;
   const hitI = ft >= 0 ? Math.floor(ft / HIT) : -1;      // 짝수: 우리 편이 때림, 홀수: 몬스터가 때림
   const over = f && hitI >= hits * 2;
+  const bow = (worn(p, 'weapon') || {}).kind === 'bow';
+  const ourTurn = fighting && hitI >= 0 && !over && hitI % 2 === 0;
   team.forEach((m, i) => {
     const rv = petView(m.id, scene.views);
     let x = 96 - i * 18;
     const walkHop = !fighting ? Math.abs(Math.sin(t * 7 + i)) * 4 : 0;
-    // 우리 차례면 앞으로 콩
-    if (fighting && hitI >= 0 && !over && hitI % 2 === 0 && (i === 0 || hitI % 4 === 0)) {
+    // 우리 차례면 앞으로 콩 (활을 든 내 말랑이는 제자리에서 쏜다)
+    if (ourTurn && (i === 0 || hitI % 4 === 0) && !(i === 0 && bow)) {
       x += Math.sin(((ft % HIT) / HIT) * Math.PI) * 14;
     }
     if (over && !f.res.win && i === 0) rv.s = 0.4;   // 졌으면 납작
@@ -727,6 +818,16 @@ function drawScene(t, dt) {
     if (theirTurn) mx -= Math.sin(((ft % HIT) / HIT) * Math.PI) * 14;
     const hurt = hitI >= 0 && !over && hitI % 2 === 0 && (ft % HIT) / HIT > 0.4;
     const gone = over && res.win;
+    // 활: 화살이 슝 날아가서 맞힌다 (몬스터가 움찔하기 전에 닿는다)
+    const fly = ((ft % HIT) / HIT) * 2.5;
+    if (bow && ourTurn && fly < 1) {
+      const ax = Math.round(110 + (mx - 8 - 110) * fly), ay = SG - 12;
+      sctx.fillStyle = T.pot;
+      sctx.fillRect(ax - 8, ay, 8, 2);
+      sctx.fillStyle = T.text_sub;
+      sctx.fillRect(ax, ay - 1, 2, 4);
+      sctx.fillRect(ax - 10, ay - 2, 2, 2); sctx.fillRect(ax - 10, ay + 2, 2, 2);
+    }
     if (!gone && !(hurt && Math.floor(t * 20) % 2)) {
       drawSprite(sctx, res.mob.sprite, mx + (hurt ? 2 : 0), SG, px);
       if (res.boss) drawSprite(sctx, 'crown', mx, SG - SPR[res.mob.sprite].length * px - 4, 2);
@@ -746,6 +847,7 @@ function drawScene(t, dt) {
         k++;
       }
       if (res.levelUp) scene.floaters.push({ x: 96, y: SG - 44, text: `Lv.${res.levelUp}!`, color: T.warn, t: 1.6 });
+      if (res.gear) scene.floaters.push({ x: mx, y: SG - 40, text: '!', color: T.warn, t: 2, sprite: GEAR[res.gear].sprite });
     }
     if (over && !res.win && !f.done) { f.done = true; scene.floaters.push({ x: 96, y: SG - 40, text: '후퇴..', color: T.warn, t: 1.4 }); }
     sctx.fillStyle = res.boss ? T.warn : T.text_sub;
@@ -945,7 +1047,206 @@ function drawKitchen(t, dt) {
   drawFx(dt);
 }
 
+// ---------- 옷장 ----------
+const closetBox = $('closet');
+const closetCv = $('closetScene');
+const cctx = closetCv.getContext('2d');
+const CW = closetCv.width, CH = closetCv.height, CG = 74;   // 장면 크기 · 바닥 높이
+const closetViews = new Map();
+let closetPos = null;
+let closetPetId = null;
+let closetKey = '';
+
+// 옷장 앞에 선 아이 (집에 있는 아이만 갈아입힐 수 있다)
+function closetPet() {
+  const ok = (p) => p && stageOf(p) !== 'egg';
+  return state.pets.find((p) => p.id === closetPetId && ok(p)) || [selected(), ...state.pets].find(ok) || null;
+}
+
+function openCloset() {
+  closetBox.hidden = false;
+  refreshCloset(true);
+  placeCloset();
+}
+
+function placeCloset() {
+  if (closetBox.hidden) return;
+  const w = closetBox.offsetWidth, h = closetBox.offsetHeight;
+  let left = 16, top = H - h - 24;
+  if (closetPos) ({ x: left, y: top } = closetPos);
+  else if (!home.hidden) {
+    // 집 창 왼쪽에 나란히
+    const r = home.getBoundingClientRect();
+    left = r.left - w - 14;
+    top = r.bottom - h;
+  }
+  closetBox.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
+  closetBox.style.top = Math.round(clamp(top, 10, H - h - 10)) + 'px';
+}
+
+function wear(p, id) {
+  const g = GEAR[id];
+  if (!p || !g) return;
+  if (!canWear(p, g)) return toast('아직 입을 수 없어요 (레벨 · 탐험 조건을 확인해 주세요)');
+  if (freeCount(id) <= 0) return toast(`${josa(g.name, '은', '는')} 다른 말랑이가 입고 있어요`);
+  rpgOf(p).gear[g.slot] = id;
+  const rv = closetViews.get(p.id);
+  if (rv) { rv.jumpT = 0.5; rv.sv -= 2.5; }
+  toast(`${josa(p.name, '이', '가')} ${josa(g.name, '을', '를')} ${g.slot === 'weapon' ? '들었어요' : '입었어요'}!`);
+  persist();
+  refreshCloset(true);
+}
+
+function takeOff(p, slot) {
+  if (!p || !rpgOf(p).gear[slot]) return;
+  rpgOf(p).gear[slot] = null;
+  const rv = closetViews.get(p.id);
+  if (rv) rv.sv += 2;
+  persist();
+  refreshCloset(true);
+}
+
+function refreshCloset(force = false) {
+  if (closetBox.hidden) return;
+  const p = closetPet();
+  const key = `${p ? p.id + JSON.stringify(rpgOf(p).gear) + rpgOf(p).lv + JSON.stringify(rpgOf(p).zones) : ''}|${JSON.stringify(R.gear)}|${state.pets.map((x) => x.id + stageOf(x)).join()}|${R.away.map((x) => x.id).join()}`;
+  if (!force && key === closetKey) return;
+  closetKey = key;
+  const total = Object.values(R.gear).reduce((s, n) => s + n, 0);
+  $('closetSub').textContent = `장비 ${total}개`;
+
+  // 입힐 말랑이 (모험 간 아이는 돌아오면)
+  const pets = state.pets.filter((x) => stageOf(x) !== 'egg');
+  const opts = pets.map((x) => {
+    const o = el('option', null, `${x.name} Lv.${rpgOf(x).lv}`);
+    o.value = x.id;
+    o.selected = p && p.id === x.id;
+    return o;
+  });
+  for (const x of R.away) { const o = el('option', null, `${x.name} (모험 중)`); o.disabled = true; opts.push(o); }
+  $('closetPet').replaceChildren(...(opts.length ? opts : [el('option', null, '입힐 말랑이가 없어요')]));
+
+  // 지금 입은 것 · 능력치 · 탐험한 곳
+  const wearBox = $('closetWear');
+  wearBox.replaceChildren();
+  if (p) {
+    for (const slot of ['weapon', 'armor']) {
+      const g = worn(p, slot);
+      const row = el('div', 'row');
+      row.append(el('span', 'slot', SLOT_NAME[slot]), el('span', 'what', g ? g.name : '없음'));
+      if (g) row.append(el('span', 'sub', gearText(g)), button('벗기기', () => takeOff(p, slot), 'link'));
+      wearBox.append(row);
+    }
+    const def = Math.round(gearDef(p) * 100);
+    wearBox.append(el('div', 'sub', `공격 ${Math.round(atkOf(p))} · 체력 ${maxHp(p)}${def ? ` · 받는 피해 -${def}%` : ''}`));
+    const done = ZONES.filter((z) => explored(p, z.id)).map((z) => z.name);
+    wearBox.append(el('div', 'sub', done.length ? `탐험 끝: ${done.join(', ')}` : `탐험 끝낸 곳이 아직 없어요 (한 곳에서 ${EXPLORE}마리)`));
+  }
+
+  // 가진 장비: 단계 순, 무기 먼저
+  const ids = Object.keys(GEAR).filter((id) => R.gear[id] > 0);
+  $('closetList').replaceChildren(...(ids.length ? ids.map((id) => {
+    const g = GEAR[id];
+    const mine = p && rpgOf(p).gear[g.slot] === id;
+    const row = el('div', 'gear' + (mine ? ' worn' : ''));
+    const info = el('span', 'info');
+    info.append(el('span', 'name', `${g.name}${R.gear[id] > 1 ? ` ×${R.gear[id]}` : ''}`));
+    const need = el('span', 'need');
+    const lack = p ? gearLack(p, g) : { lv: true, zone: !!g.need };
+    need.append(el('span', lack.lv ? 'lack' : null, `Lv.${g.lv}`));
+    if (g.need) need.append(' · ', el('span', lack.zone ? 'lack' : null, `${zoneOf(g.need).name} 탐험`));
+    need.append(` · ${gearText(g)}`);
+    info.append(need);
+    let btn;
+    if (mine) btn = button('벗기기', () => takeOff(p, g.slot));
+    else {
+      const free = freeCount(id) > 0;
+      btn = button('입히기', () => wear(p, id), 'btn small primary', !p || lack.lv || lack.zone || !free);
+      btn.title = !p ? '' : lack.lv || lack.zone ? '레벨 · 탐험 조건이 모자라요' : !free ? '다른 말랑이가 입고 있어요' : '';
+    }
+    row.append(icon(g.sprite), info, btn);
+    return row;
+  }) : [el('div', 'empty', '모험에서 장비를 주워 오면 여기 걸려요')]));
+}
+
+// 옷장 앞에서 입은 모습을 보여 준다
+function drawCloset(t, dt) {
+  const c = cctx;
+  c.fillStyle = T.bg;
+  c.fillRect(0, 0, CW, CH);
+  c.fillStyle = T.gauge_empty;
+  for (let y = 8, row = 0; y < CG; y += 14, row++) {
+    for (let x = (row % 2) * 8 + 6; x < CW; x += 16) c.fillRect(x, y, 2, 2);
+  }
+  c.fillStyle = T.floor;
+  c.fillRect(0, CG, CW, CH - CG);
+  c.fillStyle = T.border;
+  c.fillRect(0, CG, CW, 2);
+  // 문이 열린 옷장: 옷걸이에 아직 아무도 안 입은 장비가 걸려 있다
+  rectO(c, 30, 12, 70, CG - 14, T.pot);
+  c.fillStyle = T.floor_grain;
+  c.fillRect(34, 16, 62, CG - 22);
+  rectO(c, 16, 14, 8, CG - 18, T.pot);
+  rectO(c, 106, 14, 8, CG - 18, T.pot);
+  c.fillStyle = T.border;
+  c.fillRect(34, 22, 62, 2);
+  const hanging = Object.keys(GEAR).filter((id) => freeCount(id) > 0).slice(-5);
+  hanging.forEach((id, i) => {
+    const x = 42 + i * 12;
+    c.fillStyle = T.text_sub;
+    c.fillRect(x - 1, 24, 2, 4);
+    drawSprite(c, GEAR[id].sprite, x - 2, 30 + SPR[GEAR[id].sprite].length * 2 + (Math.sin(t * 2 + i) > 0.6 ? 1 : 0), 2);
+  });
+  c.fillStyle = T.hunger;
+  c.fillRect(20, CG / 2, 2, 4);
+  c.fillRect(108, CG / 2, 2, 4);
+
+  const p = closetPet();
+  c.font = '11px Galmuri11, "Malgun Gothic", sans-serif';
+  c.textBaseline = 'top';
+  c.textAlign = 'right';
+  c.fillStyle = T.text_sub;
+  if (!p) { c.fillText('입힐 말랑이가 없어요', CW - 6, 6); return; }
+  const rv = petView(p.id, closetViews);
+  rv.jumpT = Math.max(0, (rv.jumpT || 0) - dt);
+  rv.x = 180; rv.face = 1;
+  rv.y = CG - Math.sin((rv.jumpT / 0.5) * Math.PI) * 12;
+  drawPet(c, p, rv, stageOf(p), t, CG, 3);
+}
+
+// 말랑이 몸에 갑옷을 입히고 무기를 쥐여 준다 (renderer.js의 drawPet이 부른다)
+hooks.dress.push((cells, p, d) => {
+  const g = p.rpg && p.rpg.gear;
+  if (!g || d.st === 'egg') return;
+  const armor = GEAR[g.armor], weapon = GEAR[g.weapon];
+  if (armor) {
+    // 몸 아랫부분을 감싸는 띠 + 위쪽 테두리 + 징
+    const [main, edge] = armor.look.map((k) => d.pal[PAL[k]]);
+    const top = d.hh >= 9 ? -3 : -2;
+    for (let y = top; y <= -1; y++) {
+      for (let x = -d.hw - 1; x <= d.hw; x++) if (cells.has(x, y)) cells.set(x, y, y === top ? edge : main);
+    }
+    for (let x = 1 - d.hw; x < d.hw - 1; x += 3) if (cells.has(x, -1)) cells.set(x, -1, edge);
+  }
+  if (weapon) {
+    // 보는 쪽 옆구리에 세워 든다
+    const right = !(d.face < 0);
+    stamp(cells, SPR[weapon.sprite + (right ? '' : 'L')], right ? d.hw + 1 : -d.hw - 2, -1, d.pal);
+  }
+});
+
 // ---------- 연결 ----------
+$('hCloset').addEventListener('click', () => { if (closetBox.hidden) openCloset(); else closetBox.hidden = true; });
+$('closetClose').addEventListener('click', () => { closetBox.hidden = true; });
+$('closetPet').addEventListener('change', (e) => { closetPetId = e.target.value; refreshCloset(true); });
+dragBy($('closetBar'), closetBox, (pos) => { closetPos = pos; });
+hooks.wardrobe.push(openCloset);
+hooks.frame.push((t, dt) => {
+  if (closetBox.hidden) return;
+  drawCloset(t, dt);
+  placeCloset();
+});
+hooks.tick.push(() => refreshCloset());
 $('hAdv').addEventListener('click', () => { if (advBox.hidden) openAdv(); else advBox.hidden = true; });
 $('advClose').addEventListener('click', () => { advBox.hidden = true; });
 $('advTab').addEventListener('click', () => { kitchen = !kitchen; advKey = ''; refreshAdv(true); });
