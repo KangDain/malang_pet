@@ -2636,8 +2636,8 @@ function dragBy(bar, box, setPos) {
 dragBy($('homeBar'), home, (pos) => { homePos = pos; });
 
 // 오른쪽 아래 모서리를 끌어서 창을 통째로 키우고 줄인다. 글자 · 버튼 · 그림이 같이 커져서 배치가 깨지지 않는다.
-// 도트 글씨가 고르게 보이도록 0.25 단위로, 원래 크기보다 작게는 안 된다 (그보다 작으면 글씨가 뭉개진다). 모서리를 두 번 누르면 원래 크기
-const UI_SCALE = { min: 1, max: 2, step: 0.25 };
+// 끄는 대로 부드럽게 따라 커진다. 원래 크기보다 작게는 안 된다 (그보다 작으면 도트 글씨가 뭉개진다). 모서리를 두 번 누르면 원래 크기
+const UI_SCALE = { min: 1, max: 2 };
 const uiScaleOf = (box) => state.uiScale[box.id] || 1;
 // 창이 화면에서 실제로 차지하는 크기 (화면 밖으로 안 나가게 놓을 때)
 const boxSize = (box) => ({ w: box.offsetWidth * uiScaleOf(box), h: box.offsetHeight * uiScaleOf(box) });
@@ -2656,13 +2656,15 @@ function resizeBy(box) {
     e.preventDefault();
     e.stopPropagation();
     const r = box.getBoundingClientRect();
-    const bw = box.offsetWidth, bh = box.offsetHeight;
+    // 창 왼쪽 위에서 처음 잡은 곳까지의 방향. 마우스를 그 방향으로 얼마나 옮겼는지만큼 키운다
+    // (대각선에 투영해서 가로 · 세로 어느 쪽으로 끌어도 튀지 않고, 잡은 곳이 마우스를 그대로 따라온다)
+    const gx = e.clientX - r.left, gy = e.clientY - r.top;
+    const k0 = uiScaleOf(box);
     uiDrag = true;
     const move = (ev) => {
-      // 모서리가 따라오도록, 가로 · 세로 중 더 많이 끈 쪽에 맞춘다
-      const k = Math.max((ev.clientX - r.left) / bw, (ev.clientY - r.top) / bh);
-      const snapped = clamp(Math.round(k / UI_SCALE.step) * UI_SCALE.step, UI_SCALE.min, UI_SCALE.max);
-      if (snapped !== uiScaleOf(box)) setUiScale(box, snapped);
+      const t = ((ev.clientX - r.left) * gx + (ev.clientY - r.top) * gy) / (gx * gx + gy * gy);
+      const k = Math.round(clamp(k0 * t, UI_SCALE.min, UI_SCALE.max) * 100) / 100;
+      if (k !== uiScaleOf(box)) setUiScale(box, k);
     };
     const up = () => {
       uiDrag = false;
