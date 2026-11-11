@@ -7,14 +7,14 @@ const THEMES = {
     border: '#94704E', text: '#4E4434', text_sub: '#8A7B61',
     pet: '#6FA36A', leaf: '#5E8C5A', pot: '#94704E',
     gauge_empty: '#DDCDB0', hunger: '#E9C27F', fun: '#A9CF7E',
-    clean: '#9ED2C6', warn: '#E39A7A',
+    clean: '#9ED2C6', warn: '#E39A7A', warn_text: '#B23A2B',
   },
   dark: {
     bg: '#262218', floor: '#3F3526', floor_grain: '#31291D',
     border: '#5E4A35', text: '#ECE8D6', text_sub: '#ADA78C',
     pet: '#9CC594', leaf: '#7FAE79', pot: '#8C6E50',
     gauge_empty: '#36302A', hunger: '#D4AE6E', fun: '#93B96C',
-    clean: '#82B8AC', warn: '#D58C70',
+    clean: '#82B8AC', warn: '#D58C70', warn_text: '#E8907A',
   },
 };
 // 각 스탯 게이지 색
@@ -130,6 +130,8 @@ const SPR = {
   unlock:   ['   sss', '   s s', '   s  ', 'hhhhh ', 'hhBhh ', 'hhBhh ', 'hhhhh '],
   eye:      ['  sss  ', ' sbbbs ', 'sbbBbbs', ' sbbbs ', '  sss  '],
   eyeOff:   ['w sss  ', ' wbbbs ', 'sbwBbbs', ' sbbws ', '  sss w'],
+  gear:     [' s s s ', 'sssssss', ' ss ss ', 'ss   ss', ' ss ss ', 'sssssss', ' s s s '],
+  arrow:    [' www ', ' www ', ' www ', 'wwwww', ' www ', '  w  '],
   // 머리 위 새싹 (맨 아랫줄이 머리에 붙는다)
   twin:     ['ll   ll', 'lll lll', ' lllll ', '   l   '],
   single:   ['   ll', '  lll', ' lll ', '  l  '],
@@ -305,6 +307,7 @@ function loadState() {
     if (typeof s.nick !== 'string') s.nick = '';
     s.focus = !!s.focus;
     s.onTop = !!s.onTop;
+    s.tourDone = !!s.tourDone;   // 1.8.6 전부터 키우던 사람도 튜토리얼을 한 번 본다
     if (!s.uiScale || typeof s.uiScale !== 'object') s.uiScale = {};
     if (!s.weatherLoc || !Number.isFinite(s.weatherLoc.lat)) s.weatherLoc = DEFAULT_LOC;
     return s;
@@ -312,7 +315,7 @@ function loadState() {
   // mark: 말랑이네 표지 위치 (화면 비율, null이면 오른쪽 아래 기본 자리)
   return {
     version: 2, lastSim: Date.now(), selectedId: null, theme: 'system', pets: [],
-    mark: null, markLocked: false, markHidden: false, dnd: true, focus: false, onTop: false, uiScale: {},
+    mark: null, markLocked: false, markHidden: false, dnd: true, focus: false, onTop: false, uiScale: {}, tourDone: false,
     myCode: makeCode(), nick: '', friends: [], blocked: [], weatherLoc: DEFAULT_LOC,
   };
 }
@@ -747,6 +750,18 @@ function prefsChanged() {
   document.body.classList.toggle('focusing', state.focus);   // 집중 중엔 알림 글을 구석으로
   window.malang.prefsChanged({ hidden: state.markHidden, locked: state.markLocked, dnd: state.dnd, focus: state.focus, onTop: state.onTop });
   persist();
+  if (typeof refreshSettings === 'function') refreshSettings();   // tour.js (설정 창)
+}
+
+function toggleDnd() {
+  state.dnd = !state.dnd;
+  toast(state.dnd ? '방해 금지 모드: 전체화면 창이 앞에 있으면 숨어 있을게요' : '방해 금지 모드를 껐어요');
+  prefsChanged();
+}
+function toggleOnTop() {
+  state.onTop = !state.onTop;
+  toast(state.onTop ? '말랑이가 언제나 맨 위에 있을게요' : '다른 프로그램 창이 말랑이를 덮을 수 있어요');
+  prefsChanged();
 }
 
 // 제목 줄의 작은 아이콘 버튼: 지금 상태 아이콘 + 누르면 할 일을 툴팁으로 (켜져 있으면 바탕을 깐다)
@@ -2139,7 +2154,14 @@ let uiDrag = false;
 
 function toggleHome() {
   home.hidden = !home.hidden;
-  if (!home.hidden) { closeCard(); refreshHome(); placeHome(); }
+  if (home.hidden) return;
+  closeCard();
+  refreshHome();
+  // 표지 바로 위 (표지를 숨겼으면 오른쪽 아래). 다른 창이 있으면 옆으로
+  const { w, h } = boxSize(home);
+  const g = homeMark.geo || { x: W - 20, y: floorY(), w: 0 };
+  homePos = autoSpot(home, { x: g.x + g.w - w, y: g.y - h - 14 }, homePos);
+  placeHome();
 }
 
 function placeHome() {
@@ -2629,7 +2651,10 @@ function dragBy(bar, box, setPos) {
     const r = box.getBoundingClientRect();
     const off = { x: e.clientX - r.left, y: e.clientY - r.top };
     uiDrag = true;
-    const move = (ev) => setPos({ x: ev.clientX - off.x, y: ev.clientY - off.y });
+    const move = (ev) => {
+      userPlaced.add(box);
+      setPos({ x: ev.clientX - off.x, y: ev.clientY - off.y });
+    };
     const up = () => {
       uiDrag = false;
       window.removeEventListener('pointermove', move);
@@ -2640,6 +2665,38 @@ function dragBy(bar, box, setPos) {
   });
 }
 dragBy($('homeBar'), home, (pos) => { homePos = pos; });
+
+// ===================== 창 나란히 놓기 =====================
+// 새로 연 창이 이미 열린 창을 덮지 않게, 원래 열리던 자리(want)에서 가장 가까운 빈 자리를 찾는다.
+// 후보: 원래 자리 + 열린 창마다 왼쪽 · 오른쪽 · 위 (아래나 위 끝을 맞춰서). 안 겹치는 게 먼저, 그다음 가까운 곳.
+// 제목줄을 끌어 직접 옮긴 창은 그 자리를 지킨다 (켜 있는 동안)
+const userPlaced = new Set();
+const panels = () => [home, friendsBox, chatBox, advBox, closetBox, settingsBox];
+function findSpot(box, want) {
+  const { w, h } = boxSize(box);
+  const gap = 14;
+  const others = panels().filter((b) => b !== box && !b.hidden).map((b) => b.getBoundingClientRect());
+  const fit = (x, y) => ({ x: Math.round(clamp(x, 10, W - w - 10)), y: Math.round(clamp(y, 10, H - h - 10)) });
+  const covered = (p) => others.reduce((sum, r) => sum
+    + Math.max(0, Math.min(p.x + w, r.right) - Math.max(p.x, r.left)) * Math.max(0, Math.min(p.y + h, r.bottom) - Math.max(p.y, r.top)), 0);
+  const first = fit(want.x, want.y);
+  const cands = [first];
+  for (const r of others) {
+    cands.push(
+      fit(r.left - w - gap, r.bottom - h), fit(r.right + gap, r.bottom - h),
+      fit(r.left - w - gap, r.top), fit(r.right + gap, r.top),
+      fit(r.left, r.top - h - gap), fit(r.right - w, r.top - h - gap),
+    );
+  }
+  let best = first, bestScore = Infinity;
+  for (const p of cands) {
+    const score = covered(p) * 1000 + Math.hypot(p.x - first.x, p.y - first.y);
+    if (score < bestScore) { best = p; bestScore = score; }
+  }
+  return best;
+}
+// 창을 열 때: 직접 옮긴 적 없으면 빈 자리를 찾아 준다
+const autoSpot = (box, want, pos) => (userPlaced.has(box) && pos ? pos : findSpot(box, want));
 
 // 오른쪽 아래 모서리를 끌어서 창을 통째로 키우고 줄인다. 글자 · 버튼 · 그림이 같이 커져서 배치가 깨지지 않는다.
 // 끄는 대로 부드럽게 따라 커진다. 원래 크기보다 작게는 안 된다 (그보다 작으면 도트 글씨가 뭉개진다). 모서리를 두 번 누르면 원래 크기
@@ -3005,6 +3062,8 @@ function confirmModal() {
     v.y = 120;   // 하늘에서 톡 떨어진다
     state.selectedId = p.id;
     toast(`${name}의 알이 도착했어요!`);
+    // 처음 데려온 말랑이면 알이 떨어진 뒤 튜토리얼을 시작한다
+    if (!state.tourDone) setTimeout(startTour, 1500);
   } else if (modalMode === 'edit') {
     const p = selected();
     if (p) { p.name = name; p.sprout = modalSprout; p.color = modalColor; }
@@ -3104,16 +3163,9 @@ window.malang.onCommand((command) => {
   if (command === 'friends') openFriends();
   if (command === 'focus') toggleFocus();
   if (command === 'quit') quitApp();
-  if (command === 'dnd') {
-    state.dnd = !state.dnd;
-    toast(state.dnd ? '방해 금지 모드: 전체화면 창이 앞에 있으면 숨어 있을게요' : '방해 금지 모드를 껐어요');
-    prefsChanged();
-  }
-  if (command === 'ontop') {
-    state.onTop = !state.onTop;
-    toast(state.onTop ? '말랑이가 언제나 맨 위에 있을게요' : '다른 프로그램 창이 말랑이를 덮을 수 있어요');
-    prefsChanged();
-  }
+  if (command === 'dnd') toggleDnd();
+  if (command === 'ontop') toggleOnTop();
+  if (command === 'settings') openSettings();
   if (command === 'dnd:quiet') quiet = true;
   if (command === 'dnd:loud') quiet = false;
 });
@@ -3886,9 +3938,14 @@ function visitorClicked(vis) {
 
 function openFriends() {
   closeCard();
+  const opening = friendsBox.hidden;
   friendsBox.hidden = false;
   $('fNick').value = state.nick;
   refreshFriends();
+  if (opening) {
+    const { w, h } = boxSize(friendsBox);
+    friendsPos = autoSpot(friendsBox, { x: W - w - 345, y: H - h - 60 }, friendsPos);
+  }
   placeFriends();
 }
 
@@ -3897,8 +3954,13 @@ const chatBox = $('chat');
 let chatPos = null;
 function openChat() {
   closeCard();
+  const opening = chatBox.hidden;
   chatBox.hidden = false;
   refreshFriends();
+  if (opening) {
+    const { w, h } = boxSize(chatBox);
+    chatPos = autoSpot(chatBox, { x: W - w - 30, y: H - h - 60 }, chatPos);
+  }
   placeChat();
 }
 function placeChat() {
@@ -4167,7 +4229,6 @@ dragBy($('chatBar'), chatBox, (pos) => { chatPos = pos; });
 resizeBy(chatBox);
 $('chatClose').addEventListener('click', () => { chatBox.hidden = true; refreshFriends(); });
 $('fOpenChat').addEventListener('click', openChat);
-$('appVer').textContent = 'v' + window.malang.version;
 $('fNick').addEventListener('change', (e) => {
   state.nick = cleanText(e.target.value, 10);
   e.target.value = state.nick;

@@ -559,6 +559,9 @@ const scene = {
 function openAdv() {
   advBox.hidden = false;
   refreshAdv(true);
+  // 왼쪽 아래 (다른 창이 있으면 옆으로)
+  const { h } = boxSize(advBox);
+  advPos = autoSpot(advBox, { x: 16, y: H - h - 24 }, advPos);
   placeAdv();
 }
 
@@ -1068,6 +1071,10 @@ function closetPet() {
 function openCloset() {
   closetBox.hidden = false;
   refreshCloset(true);
+  // 집 창이 열려 있으면 그 왼쪽에 나란히, 아니면 왼쪽 아래 (다른 창이 있으면 옆으로)
+  const { w, h } = boxSize(closetBox);
+  const r = !home.hidden && home.getBoundingClientRect();
+  closetPos = autoSpot(closetBox, r ? { x: r.left - w - 14, y: r.bottom - h } : { x: 16, y: H - h - 24 }, closetPos);
   placeCloset();
 }
 
@@ -1076,12 +1083,6 @@ function placeCloset() {
   const { w, h } = boxSize(closetBox);
   let left = 16, top = H - h - 24;
   if (closetPos) ({ x: left, y: top } = closetPos);
-  else if (!home.hidden) {
-    // 집 창 왼쪽에 나란히
-    const r = home.getBoundingClientRect();
-    left = r.left - w - 14;
-    top = r.bottom - h;
-  }
   closetBox.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
   closetBox.style.top = Math.round(clamp(top, 10, H - h - 10)) + 'px';
 }

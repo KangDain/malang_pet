@@ -43,8 +43,8 @@
       <canvas class="ico" data-icon="twin"></canvas>
       <span class="name">말랑이네</span>
       <span id="homeCount" class="sub"></span>
-      <span id="appVer" class="ver"></span>
       <span class="spacer"></span>
+      <button id="hSettings" class="link icon" title="설정 (버전 · 튜토리얼 다시 보기)"><canvas class="ico" data-icon="gear"></canvas></button>
       <button id="hLock" class="link icon"><canvas class="ico" data-icon="unlock"></canvas></button>
       <button id="hHide" class="link icon"><canvas class="ico" data-icon="eye"></canvas></button>
       <button id="homeClose" class="link">닫기</button>
@@ -198,6 +198,40 @@
     </div>
   </div>
 
+  <!-- 설정: 버전 · 테마 · 항상 위 · 방해 금지 · 튜토리얼 다시 보기 -->
+  <div id="settings" class="ui box" hidden>
+    <div id="settingsBar" class="titlebar">
+      <canvas class="ico" data-icon="gear"></canvas>
+      <span class="name">설정</span>
+      <span class="spacer"></span>
+      <button id="settingsClose" class="link">닫기</button>
+    </div>
+    <div class="set-row"><span>버전</span><span id="setVer" class="sub"></span></div>
+    <div class="set-row"><span>테마</span><button id="setTheme" class="btn small"></button></div>
+    <div class="set-row"><span>항상 위에 표시</span><button id="setTop" class="btn small"></button></div>
+    <div class="set-row"><span>방해 금지 <small>(전체화면이면 숨기)</small></span><button id="setDnd" class="btn small"></button></div>
+    <div class="set-row"><span>창 크기 · 자리</span><button id="setLayout" class="btn small">처음대로</button></div>
+    <button id="setTour" class="btn primary wide"><canvas class="ico" data-icon="sparkle"></canvas><span>튜토리얼 다시 보기</span></button>
+  </div>
+
+  <!-- 튜토리얼: 내 말랑이가 직접 알려 준다. 가리키는 곳엔 깜빡이는 테두리와 화살표 -->
+  <div id="tourRing" hidden></div>
+  <div id="tourArrow" hidden></div>
+  <div id="tour" class="ui box" hidden>
+    <canvas id="tourPet" width="96" height="84"></canvas>
+    <div class="tour-body">
+      <div id="tourTitle" class="tour-title"></div>
+      <div id="tourText" class="tour-text"></div>
+      <div class="row tour-foot">
+        <span id="tourDots" class="tour-dots"></span>
+        <span class="spacer"></span>
+        <button id="tourSkip" class="link">건너뛰기</button>
+        <button id="tourPrev" class="btn small">이전</button>
+        <button id="tourNext" class="btn small primary">다음</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 새 버전을 다 받아 두면 뜨는 알림 (집중 중엔 끝난 뒤에) -->
   <div id="update" class="ui box" hidden>
     <div class="row">
@@ -257,5 +291,6 @@
   <script src="vendor/peerjs.min.js"></script>
   <script src="renderer.js"></script>
   <script src="rpg.js"></script>
+  <script src="tour.js"></script>
 </body>
 </html>

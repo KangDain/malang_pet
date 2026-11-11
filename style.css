@@ -8,7 +8,7 @@
   --border: #94704E; --text: #4E4434; --text_sub: #8A7B61;
   --pet: #6FA36A; --leaf: #5E8C5A; --pot: #94704E;
   --gauge_empty: #DDCDB0; --hunger: #E9C27F; --fun: #A9CF7E;
-  --clean: #9ED2C6; --warn: #E39A7A;
+  --clean: #9ED2C6; --warn: #E39A7A; --warn_text: #B23A2B;
   --px: 3px;
 }
 
@@ -56,12 +56,12 @@ canvas { image-rendering: pixelated; }
 .btn:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 -2px 0 0 var(--border), 0 2px 0 0 var(--border), -2px 0 0 0 var(--border), 2px 0 0 0 var(--border); }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn.primary { background: var(--pet); color: var(--bg); font-weight: bold; }
-.btn.warn { color: var(--warn); }
+.btn.warn { color: var(--warn_text); }
 .btn.small { padding: 4px 8px; }
 .btn.wide { width: 100%; justify-content: flex-start; }
 .link { color: var(--text_sub); padding: 1px 3px; }
 .link:hover { color: var(--text); background: var(--gauge_empty); }
-.link.warn { color: var(--warn); }
+.link.warn { color: var(--warn_text); }
 
 .tag { padding: 0 5px; background: var(--gauge_empty); color: var(--text_sub); }
 
@@ -122,7 +122,7 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
 .titlebar .ver { color: var(--text_sub); font-size: 10px; opacity: .8; }
 
 /* 크기 조절: 창은 왼쪽 위를 기준으로 커지고, 오른쪽 아래 모서리에 끌 손잡이 (도트 계단) */
-#home, #adv, #closet, #friends, #chat { transform-origin: 0 0; }
+#home, #adv, #closet, #friends, #chat, #settings { transform-origin: 0 0; }
 .grip {
   position: absolute; right: 1px; bottom: 1px; width: 12px; height: 12px;
   cursor: nwse-resize; opacity: .7;
@@ -233,7 +233,7 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
 .friend .dot.online { background: var(--fun); }
 .friend .who { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .friend .sub { color: var(--text_sub); }
-.friend .sub.focus { color: var(--warn); }
+.friend .sub.focus { color: var(--warn_text); }
 
 /* 대화창: 내 말풍선은 오른쪽, 친구 말풍선은 왼쪽 */
 #fLog {
@@ -301,7 +301,7 @@ select.input { cursor: pointer; }
 .recipe:nth-child(odd) { background: var(--gauge_empty); }
 .recipe .name { flex: none; }
 .recipe .need { flex: 1; color: var(--text_sub); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recipe .need .lack { color: var(--warn); }
+.recipe .need .lack { color: var(--warn_text); }
 .recipes::-webkit-scrollbar { width: 6px; }
 .recipes::-webkit-scrollbar-thumb { background: var(--border); }
 
@@ -322,9 +322,43 @@ select.input { cursor: pointer; }
 .gear .info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .gear .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gear .need { color: var(--text_sub); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gear .need .lack { color: var(--warn); }
+.gear .need .lack { color: var(--warn_text); }
 .gear .btn { flex: none; }
 .gear.worn { box-shadow: inset 2px 0 0 0 var(--pet); }
+
+/* 설정 창 */
+#settings { position: fixed; width: 260px; padding: 0 10px 10px; animation: pop .12s steps(2); }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; }
+.set-row + .set-row { box-shadow: 0 -1px 0 0 var(--gauge_empty); }
+.set-row small { color: var(--text_sub); font-size: 11px; }
+.set-row .btn { min-width: 64px; }
+#settings .btn.wide { margin-top: 10px; }
+
+/* 튜토리얼: 왼쪽에 말랑이, 오른쪽에 말. 가리키는 곳엔 깜빡이는 도트 테두리 + 통통 튀는 화살표 */
+#tour {
+  position: fixed; z-index: 30; display: flex; gap: 8px; align-items: flex-start;
+  width: 384px; padding: 10px 12px 10px 6px; animation: pop .12s steps(2);
+}
+#tourPet { flex: none; width: 96px; height: 84px; }
+.tour-body { flex: 1; min-width: 0; }
+.tour-title { font-weight: bold; color: var(--leaf); margin-bottom: 4px; }
+.tour-text { min-height: 52px; line-height: 1.5; word-break: keep-all; }
+.tour-foot { margin-top: 8px; gap: 6px; }
+.tour-foot .btn, .tour-foot .link { flex: none; white-space: nowrap; }
+.tour-dots { display: flex; gap: 2px; }
+.tour-dots i { width: 4px; height: 4px; background: var(--gauge_empty); }
+.tour-dots i.on { background: var(--pet); }
+#tourRing {
+  position: fixed; z-index: 29; pointer-events: none;
+  box-shadow: 0 0 0 3px var(--pet), 0 0 0 6px var(--bg);
+  animation: ring 0.8s steps(2) infinite;
+}
+@keyframes ring { 50% { box-shadow: 0 0 0 3px var(--hunger), 0 0 0 6px var(--bg); } }
+#tourArrow {
+  position: fixed; z-index: 29; pointer-events: none; width: 15px; height: 18px;
+  animation: bob 0.6s steps(2) infinite;
+}
+@keyframes bob { 50% { transform: translateY(-6px); } }
 
 /* 새 버전 알림 — 화면 위쪽 가운데 */
 #update {

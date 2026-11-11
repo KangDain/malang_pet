@@ -192,6 +192,7 @@ function buildMenu() {
     { label: '말랑이 모두 부르기', click: () => send('gather') },
     { label: '말랑이네 열기', click: () => send('home') },
     { label: '친구 · 쪽지', click: () => send('friends') },
+    { label: '설정 (버전 · 튜토리얼)', click: () => send('settings') },
     { label: '집중 모드', type: 'checkbox', checked: !!prefs.focus, click: () => send('focus') },
     {
       label: '말랑이네 표지', submenu: [
