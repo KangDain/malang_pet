@@ -34,10 +34,10 @@
       "icon": "build/icon.png"
     },
     "portable": {
-      "artifactName": "MalangPet-${version}.exe"
+      "artifactName": "MalangPet.exe"
     },
     "nsis": {
-      "artifactName": "MalangPet-Setup-${version}.exe",
+      "artifactName": "MalangPet-Setup.exe",
       "oneClick": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
