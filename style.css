@@ -119,9 +119,10 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
   cursor: move;
 }
 .titlebar .name { font-weight: bold; }
+.titlebar .ver { color: var(--text_sub); font-size: 10px; opacity: .8; }
 
 /* 크기 조절: 창은 왼쪽 위를 기준으로 커지고, 오른쪽 아래 모서리에 끌 손잡이 (도트 계단) */
-#home, #adv, #closet, #friends { transform-origin: 0 0; }
+#home, #adv, #closet, #friends, #chat { transform-origin: 0 0; }
 .grip {
   position: absolute; right: 1px; bottom: 1px; width: 12px; height: 12px;
   cursor: nwse-resize; opacity: .7;
@@ -216,6 +217,15 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
 .input::placeholder { color: var(--text_sub); }
 .code { flex: 1; font-weight: bold; font-size: 14px; letter-spacing: 1px; }
 #fList { display: grid; gap: 4px; margin-top: 10px; }
+#fInvites:empty { display: none; }
+.btn.wide { width: 100%; margin-top: 8px; }
+
+/* 단톡방 창 */
+#chat { position: fixed; width: 296px; padding: 0 10px 10px; animation: pop .12s steps(2); }
+#chat #fRoom:empty { display: none; }
+.msg-input { display: block; resize: none; height: 46px; line-height: 1.4; overflow-y: auto; }
+.chat-send { margin-top: 8px; }
+.chat-send .sub { color: var(--text_sub); font-size: 11px; }
 .friend { display: flex; align-items: center; gap: 6px; padding: 3px 6px; cursor: pointer; }
 .friend:hover { background: var(--gauge_empty); }
 .friend.on { background: var(--gauge_empty); box-shadow: inset 2px 0 0 0 var(--pet); }
@@ -228,7 +238,7 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
 /* 대화창: 내 말풍선은 오른쪽, 친구 말풍선은 왼쪽 */
 #fLog {
   display: flex; flex-direction: column; gap: 6px;
-  height: 150px; overflow-y: auto; margin: 6px 0 8px; padding: 8px 6px;
+  height: 220px; overflow-y: auto; margin: 6px 0 8px; padding: 8px 6px;
   background: var(--gauge_empty);
   box-shadow: inset 0 0 0 2px var(--border);
   user-select: text;
@@ -249,6 +259,12 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
 }
 #fLog .msg .who { font-size: 11px; opacity: .75; }
 #fLog .msg img { display: block; max-width: 100%; max-height: 110px; image-rendering: auto; }
+/* 친구가 쓰고 있어요: 이름 + 점 세 개가 차례로 */
+#fLog .msg.typing .dots { display: flex; gap: 3px; padding: 4px 0; }
+#fLog .msg.typing .dots i { width: 4px; height: 4px; background: var(--text_sub); animation: typing 1.2s steps(1) infinite; }
+#fLog .msg.typing .dots i:nth-child(2) { animation-delay: .4s; }
+#fLog .msg.typing .dots i:nth-child(3) { animation-delay: .8s; }
+@keyframes typing { 0% { background: var(--text); } 33% { background: var(--text_sub); } }
 #fLog::-webkit-scrollbar { width: 6px; }
 #fLog::-webkit-scrollbar-thumb { background: var(--border); }
 #fAttach { margin-bottom: 8px; color: var(--text_sub); }

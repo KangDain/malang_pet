@@ -65,6 +65,7 @@ ipcMain.on('theme-changed', (_e, value) => {
 });
 
 ipcMain.on('quit-app', () => app.quit());
+ipcMain.on('app-version', (e) => { e.returnValue = app.getVersion(); });
 
 // 윈도우를 켤 때 같이 켜기 (설치한 exe로 실행했을 때만)
 const exePath = () => process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
@@ -324,7 +325,7 @@ ipcMain.on('install-update', () => {
 
 function createTray() {
   tray = new Tray(placeholderIcon());
-  tray.setToolTip('말랑이 키우기');
+  tray.setToolTip(`말랑이 키우기 v${app.getVersion()}`);
   tray.setContextMenu(buildMenu());
   tray.on('click', toggleVisible);
 }

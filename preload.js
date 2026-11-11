@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('malang', {
   themeChanged: (theme) => ipcRenderer.send('theme-changed', theme),
   prefsChanged: (prefs) => ipcRenderer.send('prefs-changed', prefs),
   quit: () => ipcRenderer.send('quit-app'),
+  version: ipcRenderer.sendSync('app-version'),
   installUpdate: () => ipcRenderer.send('install-update'),
   openRelease: () => ipcRenderer.send('open-release'),
   onCommand: (cb) => ipcRenderer.on('command', (_e, command) => cb(command)),

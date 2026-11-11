@@ -43,6 +43,7 @@
       <canvas class="ico" data-icon="twin"></canvas>
       <span class="name">말랑이네</span>
       <span id="homeCount" class="sub"></span>
+      <span id="appVer" class="ver"></span>
       <span class="spacer"></span>
       <button id="hLock" class="link icon"><canvas class="ico" data-icon="unlock"></canvas></button>
       <button id="hHide" class="link icon"><canvas class="ico" data-icon="eye"></canvas></button>
@@ -166,20 +167,34 @@
         <button id="fInvite" class="btn small" title="고른 친구를 단톡방에 불러요. 모이면 서로의 화면이 이어져요">부르기</button>
         <button id="fShake" class="btn small" title="친구 바탕화면의 말랑이를 흔들어요">흔들기</button>
       </div>
-      <!-- 단톡방: 모인 사람들 (방장은 내보내기) · 받은 초대 -->
-      <div id="fRoom" class="room-members"></div>
-      <div id="fLog"></div>
-      <div id="fAttach" class="row" hidden>
-        <img id="fAttachImg" alt="보낼 사진">
-        <span class="spacer">사진을 같이 보내요</span>
-        <button id="fAttachDel" class="link warn">빼기</button>
-      </div>
-      <div class="row">
-        <input id="fMsg" class="input" maxlength="40" placeholder="말랑이가 전해 줄 쪽지" autocomplete="off">
-        <button id="fPhoto" class="btn small" title="사진 보내기 (붙여넣기도 돼요)"><canvas class="ico" data-icon="photo"></canvas></button>
-        <input type="file" id="fFile" accept="image/*" hidden>
-        <button id="fSend" class="btn small primary">보내기</button>
-      </div>
+      <!-- 받은 단톡방 초대 -->
+      <div id="fInvites" class="room-members"></div>
+      <button id="fOpenChat" class="btn small primary wide" hidden>단톡방 열기</button>
+    </div>
+  </div>
+
+  <!-- 단톡방: 모인 사람들 (방장은 내보내기) · 대화 · 쪽지 쓰기 -->
+  <div id="chat" class="ui box" hidden>
+    <div id="chatBar" class="titlebar">
+      <canvas class="ico" data-icon="letter"></canvas>
+      <span class="name">단톡방</span>
+      <span id="chatState" class="sub"></span>
+      <span class="spacer"></span>
+      <button id="chatClose" class="link">닫기</button>
+    </div>
+    <div id="fRoom" class="room-members"></div>
+    <div id="fLog"></div>
+    <div id="fAttach" class="row" hidden>
+      <img id="fAttachImg" alt="보낼 사진">
+      <span class="spacer">사진을 같이 보내요</span>
+      <button id="fAttachDel" class="link warn">빼기</button>
+    </div>
+    <textarea id="fMsg" class="input msg-input" rows="2" maxlength="100" placeholder="말랑이가 전해 줄 쪽지" autocomplete="off"></textarea>
+    <div class="row chat-send">
+      <span id="fCount" class="sub spacer"></span>
+      <button id="fPhoto" class="btn small" title="사진 보내기 (붙여넣기도 돼요)"><canvas class="ico" data-icon="photo"></canvas></button>
+      <input type="file" id="fFile" accept="image/*" hidden>
+      <button id="fSend" class="btn small primary">보내기</button>
     </div>
   </div>
 

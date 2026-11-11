@@ -651,7 +651,10 @@ function drawSpeech(c, text, cx, top, icon = null, tail = true) {
 // 대화 말풍선 쌓기: 새 말이 머리 바로 위, 예전 말은 위로 밀려 올라가며 흐려진다
 const CHAT_LIFE = 20, CHAT_MAX = 3;
 const CHAT_ALPHA = [1, 0.5, 0.28];
+const CHAT_BUBBLE_MAX = 50;   // 말랑이 머리 위엔 이만큼만 (긴 쪽지는 … — 전부는 대화창에)
+const TYPING_DOTS = ['●○○', '○●○', '○○●'];
 function pushChat(list, text, thumb = null) {
+  if (text.length > CHAT_BUBBLE_MAX) text = text.slice(0, CHAT_BUBBLE_MAX - 1) + '…';
   list.push({ text, thumb, t: CHAT_LIFE });
   while (list.length > CHAT_MAX) list.shift();
 }
@@ -1867,6 +1870,8 @@ function frame(now) {
     const st = friendStatus.get(vis.code) || {};
     let top = v.geo.top;
     if (st.focus) top = drawSpeech(ctx, '집중 중', v.geo.cx, top, 'focus');
+    // 친구가 쪽지를 쓰고 있으면 '이름 ●○○' (점이 차례로), 보낸 말은 그 위로 쌓인다
+    if (isTyping(vis.code)) top = drawSpeech(ctx, `${vis.nick} ${TYPING_DOTS[Math.floor(t * 2.5) % 3]}`, v.geo.cx, top);
     if (vis.chat.length) drawChat(ctx, vis.chat, v.geo.cx, top);
     else if (!st.focus && v.emote) drawCloud(ctx, v.geo.cx, top, v.emote.icon, t);
     else if (!st.focus && vis.pet.sleeping) drawCloud(ctx, v.geo.cx, top, 'zee', t);
@@ -1883,6 +1888,7 @@ function frame(now) {
   placeCard();
   placeHome();
   placeFriends();
+  placeChat();
   updateHover();
   if (!modal.hidden) drawPreview(t);
 }
@@ -3420,6 +3426,7 @@ function inviteToRoom(code) {
   if (!room) {
     room = { id: Math.random().toString(36).slice(2, 10), host: state.myCode, members: [myMember()], at: Date.now() };
     logNote({ room: room.id, dir: 'sys', text: '단톡방을 만들었어요' });
+    openChat();
   }
   kicked.delete(code);   // 다시 부르면 내보낸 건 없던 일로
   conn.send({ t: 'rinv', id: room.id, n: room.members.length });
@@ -3436,6 +3443,8 @@ function joinRoom(hostCode) {
   if (room) leaveRoom(true);
   room = { id: inv.id, host: hostCode, members: [], at: Date.now() };
   conn.send({ t: 'rjoin', id: inv.id, pet: myPetInfo(), focus: state.focus, sleeping: mySleeping() });
+  // 방에 들어가면 대화창을 연다 (집중 중엔 방해하지 않게 안 연다)
+  if (!state.focus) openChat();
   refreshFriends();
 }
 
@@ -3445,6 +3454,8 @@ function leaveRoom(quiet = false) {
   if (amRoomHost()) for (const m of roomOthers()) sendTo(m.code, { t: 'rclose', id: room.id });
   else sendTo(room.host, { t: 'rleave', id: room.id });
   room = null;
+  typingFrom.clear();
+  typingOn = false;
   syncRoomVisitors();
   if (!quiet) toast('단톡방에서 나왔어요');
   refreshFriends();
@@ -3453,6 +3464,8 @@ function leaveRoom(quiet = false) {
 // 남이 방을 없앴다 (내보내짐 · 꽉 참 · 방장이 닫음 · 끊김)
 function roomGone(msg) {
   room = null;
+  typingFrom.clear();
+  typingOn = false;
   syncRoomVisitors();
   toast(msg);
   refreshFriends();
@@ -3493,6 +3506,7 @@ function broadcastRoomRoster() {
 
 function onRoomData(conn, f, d) {
   const id = String(d.id || '').slice(0, 12);
+  if (d.t === 'rtype') return receiveTyping(f, d);
   if (d.t === 'rinv') {
     if (room && room.id === id) return;
     roomInvites.set(f.code, { id, n: clamp(d.n | 0, 1, MAX_ROOM), at: Date.now() });
@@ -3543,7 +3557,7 @@ function onRoomData(conn, f, d) {
 // 단톡방 말: 방원 → 방장 → 다른 방원들 (방장은 받은 사진도 다시 조각내 전해 준다)
 function receiveRoomMsg(f, d, img) {
   if (!room || String(d.id || '') !== room.id) return;
-  const text = cleanText(d.text, 40);
+  const text = cleanText(d.text, MSG_MAX);
   if (!text && !img) return;
   let code = f.code;
   if (amRoomHost()) {
@@ -3560,6 +3574,7 @@ function receiveRoomMsg(f, d, img) {
   }
   const m = memberOf(code);
   const nick = m ? m.nick : cleanText(d.nick, 10) || fmtCode(code);
+  typingFrom.delete(code);
   logNote({ room: room.id, code, nick, dir: 'in', text, img });
   const vis = visitors.find((x) => x.code === code);
   if (vis) { pushChat(vis.chat, text, img ? makeThumb(img) : null); vis.v.sv += 2; }
@@ -3571,6 +3586,8 @@ function receiveRoomMsg(f, d, img) {
 function stepRoom() {
   const now = Date.now();
   for (const [code, inv] of roomInvites) if (now - inv.at > 10 * 60000 || !conns.has(code)) roomInvites.delete(code);
+  // 소식이 끊긴 '쓰는 중'은 지운다
+  for (const [code, until] of typingFrom) if (until <= now) { typingFrom.delete(code); refreshChat(); }
   if (!room) return;
   if (amRoomHost()) {
     const gone = roomOthers().filter((m) => !conns.has(m.code));
@@ -3704,7 +3721,7 @@ async function attachPhoto(blob) {
     attached = { data, thumb: makeThumb(data) };
     $('fAttachImg').src = data;
     $('fAttach').hidden = false;
-    placeFriends();
+    placeChat();
     $('fMsg').focus();
   } catch {
     toast('이 사진은 보낼 수 없어요');
@@ -3726,9 +3743,40 @@ function sendPhoto(conn, data) {
   return id;
 }
 
+// ===================== 쓰는 중 표시 =====================
+// 쪽지 칸에 글을 쓰고 있으면 방에 '쓰는 중'을 알린다 (2초마다 다시). 소식이 끊기면 5초 뒤 저절로 사라진다.
+// 방장이 받은 걸 다른 방원에게 전해 주는 건 쪽지와 같다
+const TYPING_MS = 5000;
+const typingFrom = new Map();   // 친구 코드 → 쓰는 중 표시가 꺼질 시각
+let typingOn = false, typingSentAt = 0;
+const typers = () => [...typingFrom].filter(([code, until]) => until > Date.now() && roomHas(code)).map(([code]) => code);
+const isTyping = (code) => (typingFrom.get(code) || 0) > Date.now();
+function sendTyping(on) {
+  if (!room || (on === typingOn && (!on || Date.now() - typingSentAt < 2000))) return;
+  typingOn = on;
+  typingSentAt = Date.now();
+  const targets = amRoomHost() ? roomOthers().map((m) => m.code) : [room.host];
+  for (const code of targets) sendTo(code, { t: 'rtype', id: room.id, from: state.myCode, on });
+}
+function receiveTyping(f, d) {
+  if (!room || String(d.id || '') !== room.id) return;
+  let code = f.code;
+  if (amRoomHost()) {
+    if (!roomHas(f.code)) return;
+    for (const m of roomOthers()) if (m.code !== f.code) sendTo(m.code, { t: 'rtype', id: room.id, from: f.code, on: !!d.on });
+  } else {
+    if (room.host !== f.code) return;
+    code = parseCode(d.from) || f.code;
+    if (code.length !== 8 || code === state.myCode) return;
+  }
+  if (d.on) typingFrom.set(code, Date.now() + TYPING_MS);
+  else typingFrom.delete(code);
+  refreshChat();
+}
+
 function sendNote() {
   const input = $('fMsg');
-  const text = cleanText(input.value, 40);
+  const text = cleanText(input.value, MSG_MAX);
   const photo = attached;
   if (!text && !photo) return;
   if (!room) return toast('친구를 단톡방에 부르면 대화할 수 있어요');
@@ -3741,6 +3789,8 @@ function sendNote() {
   }
   logNote({ room: room.id, code: state.myCode, dir: 'out', text, img: photo ? photo.data : null });
   input.value = '';
+  typingOn = false;   // 받는 쪽은 쪽지가 오면 '쓰는 중'을 지운다
+  updateMsgCount();
   clearAttach();
   // 내 화면에서도 내 말랑이가 보낸 말을 말풍선으로 말한다
   pushChat(myChat, text, photo ? photo.thumb : null);
@@ -3830,8 +3880,8 @@ function visitorClicked(vis) {
   vis.v.squint = 0.5;
   setEmote(vis.v, 'heart', 0.8);
   fTarget = vis.code;
-  openFriends();
-  $('fMsg').focus();
+  // 같은 단톡방이면 바로 대화창, 아니면 친구 창
+  if (roomHas(vis.code)) { openChat(); $('fMsg').focus(); } else openFriends();
 }
 
 function openFriends() {
@@ -3840,6 +3890,24 @@ function openFriends() {
   $('fNick').value = state.nick;
   refreshFriends();
   placeFriends();
+}
+
+// 단톡방 창: 친구 창 옆(오른쪽)에 따로 뜬다
+const chatBox = $('chat');
+let chatPos = null;
+function openChat() {
+  closeCard();
+  chatBox.hidden = false;
+  refreshFriends();
+  placeChat();
+}
+function placeChat() {
+  if (chatBox.hidden) return;
+  const { w, h } = boxSize(chatBox);
+  const left = chatPos ? chatPos.x : W - w - 30;
+  const top = chatPos ? chatPos.y : H - h - 60;
+  chatBox.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
+  chatBox.style.top = Math.round(clamp(top, 10, H - h - 10)) + 'px';
 }
 
 function placeFriends() {
@@ -3851,7 +3919,9 @@ function placeFriends() {
   friendsBox.style.top = Math.round(clamp(top, 10, H - h - 10)) + 'px';
 }
 
+// 친구 창과 단톡방 창을 함께 새로 그린다 (각자 닫혀 있으면 건너뛴다)
 function refreshFriends() {
+  refreshChat();
   if (friendsBox.hidden) return;
   $('netState').textContent = { on: '연결됨', connecting: '연결 중..', off: '오프라인' }[netState];
   $('myCode').textContent = fmtCode(state.myCode);
@@ -3879,7 +3949,7 @@ function refreshFriends() {
       del.textContent = removeArmed === f.code ? '정말?' : '삭제';
       del.addEventListener('click', (e) => { e.stopPropagation(); removeFriend(f.code); });
       row.append(dot, who, sub, del);
-      row.addEventListener('click', () => { fTarget = f.code; removeArmed = null; refreshFriends(); $('fMsg').focus(); });
+      row.addEventListener('click', () => { fTarget = f.code; removeArmed = null; refreshFriends(); });
       return row;
     }));
   }
@@ -3888,17 +3958,32 @@ function refreshFriends() {
   $('fTo').textContent = !room ? '친구를 골라 단톡방에 불러 보세요'
     : !n ? '단톡방에 들어가는 중..'
     : `단톡방 · ${n}명${amRoomHost() ? ' · 방장' : ''}`;
-  for (const id of ['fMsg', 'fSend', 'fPhoto']) $(id).disabled = !room;
-  $('fMsg').placeholder = room ? '모두에게 말풍선으로 전해져요' : '단톡방에 모이면 대화할 수 있어요';
+  $('fOpenChat').hidden = !room || !chatBox.hidden;
   $('fShake').disabled = !f || !conns.has(f.code) || state.focus;
   const inRoom = f && roomHas(f.code);
   $('fInvite').disabled = !f || !conns.has(f.code) || inRoom || (room && !amRoomHost());
   $('fInvite').textContent = inRoom ? '같은 방' : '부르기';
+  renderInvites();
+}
+
+function refreshChat() {
+  if (chatBox.hidden) return;
+  const n = room ? room.members.length : 0;
+  $('chatState').textContent = !room ? '' : !n ? '들어가는 중..' : `${n}명${amRoomHost() ? ' · 방장' : ''}`;
+  for (const id of ['fMsg', 'fSend', 'fPhoto']) $(id).disabled = !room;
+  $('fMsg').placeholder = room ? '모두에게 말풍선으로 전해져요' : '단톡방에 모이면 대화할 수 있어요';
+  updateMsgCount();
   renderRoom();
   renderChat();
 }
 
-// 단톡방 사람들 (나 · 방장 표시, 방장은 내보내기) + 나가기, 받은 초대
+const MSG_MAX = 100;   // 쪽지 한 번에 보낼 수 있는 글자 수
+function updateMsgCount() {
+  const n = $('fMsg').value.length;
+  $('fCount').textContent = n ? `${n}/${MSG_MAX}` : '';
+}
+
+// 단톡방 사람들 (나 · 방장 표시, 방장은 내보내기) + 나가기
 function renderRoom() {
   const rows = [];
   if (room) {
@@ -3934,7 +4019,12 @@ function renderRoom() {
     bar.append(hint, leave);
     rows.push(bar);
   }
-  for (const [code, inv] of roomInvites) {
+  $('fRoom').replaceChildren(...rows);
+}
+
+// 받은 단톡방 초대 (친구 창)
+function renderInvites() {
+  $('fInvites').replaceChildren(...[...roomInvites].map(([code, inv]) => {
     const row = document.createElement('div');
     row.className = 'member';
     const who = document.createElement('span');
@@ -3945,9 +4035,8 @@ function renderRoom() {
     join.textContent = '참가';
     join.addEventListener('click', () => joinRoom(code));
     row.append(who, join);
-    rows.push(row);
-  }
-  $('fRoom').replaceChildren(...rows);
+    return row;
+  }));
 }
 
 // 대화창: 내가 보낸 건 오른쪽, 친구가 보낸 건 왼쪽 말풍선
@@ -3955,17 +4044,31 @@ function renderRoom() {
 function renderChat() {
   const rid = room ? room.id : null;
   const items = noteLog.filter((n) => (rid && n.room === rid) || (!n.room && n.dir === 'sys' && n.code === fTarget));
-  const key = `${rid}|${fTarget}|${noteSeq}`;
+  const typing = typers();
+  const key = `${rid}|${fTarget}|${noteSeq}|${typing.join()}`;
   if (key === chatKey) return;
   chatKey = key;
   const box = $('fLog');
-  if (!items.length) {
+  if (!items.length && !typing.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = room ? '아직 나눈 대화가 없어요' : '친구를 골라 [부르기]를 누르면 단톡방이 생겨요. 모이면 서로의 화면이 이어져요';
+    empty.textContent = room ? '아직 나눈 대화가 없어요' : '친구 창에서 친구를 골라 [부르기]를 누르면 단톡방이 생겨요. 모이면 서로의 화면이 이어져요';
     box.replaceChildren(empty);
     return;
   }
+  // 카톡처럼 맨 아래에 '이름 + 점 세 개' (쓰고 있는 사람마다)
+  const typingRows = typing.map((code) => {
+    const el = document.createElement('div');
+    el.className = 'msg in typing';
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = (memberOf(code) || {}).nick || fmtCode(code);
+    const dots = document.createElement('span');
+    dots.className = 'dots';
+    dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+    el.append(who, dots);
+    return el;
+  });
   box.replaceChildren(...items.slice(-30).map((n) => {
     const el = document.createElement('div');
     el.className = 'msg ' + n.dir;
@@ -3990,7 +4093,7 @@ function renderChat() {
       el.append(tx);
     }
     return el;
-  }));
+  }), ...typingRows);
   box.scrollTop = box.scrollHeight;
 }
 
@@ -4042,7 +4145,29 @@ $('fMsg').addEventListener('paste', (e) => {
   e.preventDefault();
   attachPhoto(item.getAsFile());
 });
-$('fMsg').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendNote(); });
+// Enter로 보내기. 한글을 조합하는 중에 누르면 조합이 끝난 뒤에 보낸다 (마지막 글자가 칸에 남지 않게)
+let sendAfterCompose = false;
+$('fMsg').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  e.preventDefault();
+  if (e.isComposing) sendAfterCompose = true;
+  else sendNote();
+});
+$('fMsg').addEventListener('compositionend', () => {
+  if (!sendAfterCompose) return;
+  sendAfterCompose = false;
+  setTimeout(sendNote, 0);
+});
+$('fMsg').addEventListener('input', () => {
+  updateMsgCount();
+  sendTyping($('fMsg').value.trim().length > 0);
+});
+$('fMsg').addEventListener('blur', () => sendTyping(false));
+dragBy($('chatBar'), chatBox, (pos) => { chatPos = pos; });
+resizeBy(chatBox);
+$('chatClose').addEventListener('click', () => { chatBox.hidden = true; refreshFriends(); });
+$('fOpenChat').addEventListener('click', openChat);
+$('appVer').textContent = 'v' + window.malang.version;
 $('fNick').addEventListener('change', (e) => {
   state.nick = cleanText(e.target.value, 10);
   e.target.value = state.nick;
