@@ -3010,13 +3010,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeModal();
 });
 
-// 트레이 메뉴에서 오는 명령
 // ===================== 새 버전 알림 =====================
 // main.js가 GitHub에서 새 버전을 다 받아 두면 알려 준다. 집중 중이면 집중이 끝난 뒤에 띄운다.
-let updateVer = null;
+// 포터블 exe는 스스로 못 바꾸니 '새 버전이 나왔어요'와 받으러 갈 링크만 띄운다 (manual)
+let updateVer = null, updateManual = false;
 function showUpdate() {
   if (!updateVer || state.focus) return;
-  $('updText').textContent = `새 버전(v${updateVer})이 준비됐어요!`;
+  $('updText').textContent = updateManual ? `새 버전(v${updateVer})이 나왔어요!` : `새 버전(v${updateVer})이 준비됐어요!`;
+  $('updNow').textContent = updateManual ? '받으러 가기' : '지금 다시 켜기';
   $('update').hidden = false;
 }
 function installUpdate() {
@@ -3027,13 +3028,20 @@ function installUpdate() {
 }
 $('updLater').addEventListener('click', () => {
   $('update').hidden = true;
-  toast('다음에 말랑이를 끌 때 새 버전으로 바뀌어요');
+  toast(updateManual ? '트레이 메뉴에서도 받으러 갈 수 있어요' : '다음에 말랑이를 끌 때 새 버전으로 바뀌어요');
 });
-$('updNow').addEventListener('click', installUpdate);
+$('updNow').addEventListener('click', () => {
+  if (!updateManual) return installUpdate();
+  $('update').hidden = true;
+  window.malang.openRelease();
+  toast('Setup 파일을 받아 실행하면 다음부터는 알아서 바뀌어요');
+});
 
+// 트레이 메뉴에서 오는 명령
 window.malang.onCommand((command) => {
   if (command === 'update:install') installUpdate();
-  else if (command.startsWith('update:')) { updateVer = command.slice(7); showUpdate(); }
+  else if (command.startsWith('update:')) { updateVer = command.slice(7); updateManual = false; showUpdate(); }
+  else if (command.startsWith('release:')) { updateVer = command.slice(8); updateManual = true; showUpdate(); }
   if (command === 'adopt') openModal('adopt');
   if (command === 'gather') gather();
   if (command.startsWith('theme:')) setTheme(command.slice(6));

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, crashReporter } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, crashReporter, net, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -213,6 +213,7 @@ function buildMenu() {
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked, path: exePath() }),
     }] : []),
     ...(updateReady ? [{ label: `새 버전 ${updateReady} 설치하고 다시 켜기`, click: () => win && win.webContents.send('command', 'update:install') }] : []),
+    ...(newRelease ? [{ label: `새 버전 ${newRelease} 받으러 가기`, click: openRelease }] : []),
     { type: 'separator' },
     // 렌더러가 친구들에게 작별 인사를 보내고 끈다 (응답이 없으면 1초 뒤 그냥 끈다)
     { label: '종료', click: () => { if (win) { win.webContents.send('command', 'quit'); setTimeout(() => app.quit(), 1000); } else app.quit(); } },
@@ -222,11 +223,12 @@ function buildMenu() {
 // ===================== 자동 업데이트 =====================
 // GitHub Releases에 새 버전이 올라오면 몰래 받아 두고, 다 받으면 말랑이가 알림 창을 띄운다.
 // '지금 다시 켜기'를 누르면 바로 설치하고 다시 켜지고, '나중에'를 누르면 다음에 끌 때 설치된다.
-// 설치판(Setup.exe)으로 깐 경우만 (포터블 · 개발 중 실행은 건너뛴다)
+// 설치판은 electron-updater가, 포터블은 아래 setupReleaseCheck가 맡는다 (개발 중 실행은 건너뛴다)
 let updateReady = null;   // 다 받아 둔 새 버전
 let autoUpdater = null;
 function setupUpdater() {
-  if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_FILE) return;
+  if (!app.isPackaged) return;
+  if (process.env.PORTABLE_EXECUTABLE_FILE) return setupReleaseCheck();
   try { ({ autoUpdater } = require('electron-updater')); } catch { return; }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -240,9 +242,75 @@ function setupUpdater() {
   setTimeout(check, 15000);
   setInterval(check, 3 * 60 * 60 * 1000);
 }
+// 포터블 exe는 자기 파일을 바꿔 끼울 수 없어서, 새 설치판(Setup)을 몰래 받아 두었다가 조용히 설치한다.
+// 설치판으로 바뀌면 그다음부터는 electron-updater가 맡는다. 세이브는 %APPDATA%에 있어서 그대로 이어진다.
+// 받기나 확인이 실패하면 릴리스 페이지 링크만 띄운다
+const RELEASE_PAGE = 'https://github.com/KangDain/malang_pet/releases/latest';
+const RELEASE_DL = 'https://github.com/KangDain/malang_pet/releases';
+let newRelease = null;    // 받지 못해서 링크로만 알린 새 버전
+let setupFile = null;     // 다 받고 확인까지 마친 설치판 경로
+let setupLaunched = false;
+const newer = (a, b) => {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
+async function downloadSetup() {
+  // latest.yml에 버전 · 파일 이름 · sha512가 있다 (electron-builder가 릴리스에 같이 올린다)
+  const res = await net.fetch(RELEASE_DL + '/latest/download/latest.yml');
+  if (!res.ok) return null;
+  const yml = await res.text();
+  const ver = (yml.match(/^version:\s*(\S+)/m) || [])[1];
+  const file = (yml.match(/^path:\s*(\S+)/m) || [])[1];
+  const sha = (yml.match(/^sha512:\s*(\S+)/m) || [])[1];
+  if (!ver || !/^\d+\.\d+\.\d+$/.test(ver) || !newer(ver, app.getVersion())) return null;
+  if (!file || !sha || !/^[\w.-]+\.exe$/.test(file)) return { ver };
+  const bin = await net.fetch(`${RELEASE_DL}/download/v${ver}/${file}`);
+  if (!bin.ok) return { ver };
+  const buf = Buffer.from(await bin.arrayBuffer());
+  // 받은 파일이 릴리스에 올린 것과 똑같은지 확인한다
+  if (require('crypto').createHash('sha512').update(buf).digest('base64') !== sha) { log('update: sha512 mismatch'); return { ver }; }
+  const dir = path.join(app.getPath('temp'), 'malang-update');
+  fs.mkdirSync(dir, { recursive: true });
+  const out = path.join(dir, file);
+  fs.writeFileSync(out, buf);
+  return { ver, out };
+}
+function setupReleaseCheck() {
+  const check = async () => {
+    if (setupFile || newRelease) return;
+    try {
+      const got = await downloadSetup();
+      if (!got) return;
+      if (got.out) {
+        setupFile = got.out;
+        updateReady = got.ver;
+        log('update: downloaded', got.ver);
+        if (win) win.webContents.send('command', 'update:' + got.ver);
+      } else {
+        newRelease = got.ver;
+        log('update: link only', got.ver);
+        if (win) win.webContents.send('command', 'release:' + got.ver);
+      }
+      if (tray) tray.setContextMenu(buildMenu());
+    } catch (err) { log('update: check failed', err && err.message); }   // 인터넷이 없으면 다음에 다시
+  };
+  setTimeout(check, 15000);
+  setInterval(check, 3 * 60 * 60 * 1000);
+}
+// 설치판을 조용히(/S) 실행한다. run이면 설치 뒤 말랑이를 다시 켠다
+function runSetup(run) {
+  if (!setupFile || setupLaunched) return;
+  setupLaunched = true;
+  log('update: installing', updateReady);
+  spawn(setupFile, ['--updated', '/S', ...(run ? ['--force-run'] : [])], { detached: true, stdio: 'ignore' }).unref();
+}
+function openRelease() { shell.openExternal(RELEASE_PAGE); }
+ipcMain.on('open-release', openRelease);
 // 렌더러가 저장 · 작별 인사를 마치고 부른다
 ipcMain.on('install-update', () => {
   if (autoUpdater && updateReady) autoUpdater.quitAndInstall(true, true);
+  else if (setupFile) { runSetup(true); app.quit(); }
 });
 
 function createTray() {
@@ -313,5 +381,8 @@ if (!app.requestSingleInstanceLock()) {
     setupUpdater();
   });
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => { if (watcher) watcher.kill(); });
+  app.on('before-quit', () => {
+    if (watcher) watcher.kill();
+    runSetup(false);   // '나중에'를 눌렀으면 끌 때 설치된다
+  });
 }
