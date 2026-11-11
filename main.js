@@ -9,7 +9,7 @@ let tray = null;
 const savePath = () => path.join(app.getPath('userData'), 'malang-save.json');
 
 // ===================== 실행 기록 =====================
-// 어떤 PC에서 말랑이가 안 켜질 때 원인을 찾으려고 %APPDATA%malang-petmalang-log.txt에 남긴다.
+// 어떤 PC에서 말랑이가 안 켜질 때 원인을 찾으려고 %APPDATA%\malang-pet\malang-log.txt에 남긴다.
 // 'start'만 있고 그 뒤가 없으면 창을 띄우기 전에 죽은 것, 아예 없으면 실행 자체가 막힌 것
 const logPath = () => path.join(app.getPath('userData'), 'malang-log.txt');
 function log(...args) {
@@ -25,7 +25,7 @@ log('start', app.getVersion(), process.platform, require('os').release(), proces
 process.on('uncaughtException', (err) => log('main error', (err && err.stack) || err));
 app.on('child-process-gone', (_e, d) => log('child gone', d.type, d.reason, d.exitCode, d.name || ''));
 app.on('render-process-gone', (_e, _wc, d) => log('renderer gone', d.reason, d.exitCode));
-// 네이티브로 죽어도 덤프가 %APPDATA%malang-petCrashpad에 남는다 (어디로도 보내지 않는다)
+// 네이티브로 죽어도 덤프가 %APPDATA%\malang-pet\Crashpad에 남는다 (어디로도 보내지 않는다)
 try { crashReporter.start({ uploadToServer: false }); } catch {}
 
 ipcMain.on('load-sync', (e) => {
@@ -71,9 +71,10 @@ const exePath = () => process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
 const autoStart = () => app.getLoginItemSettings({ path: exePath() }).openAtLogin;
 
 // 렌더러가 가진 설정 (표지 숨김/고정, 방해 금지) — 트레이 메뉴 체크 표시용
-let prefs = { hidden: false, locked: false, dnd: true, focus: false };
+let prefs = { hidden: false, locked: false, dnd: true, focus: false, onTop: false };
 ipcMain.on('prefs-changed', (_e, value) => {
   prefs = value;
+  if (win && win.isAlwaysOnTop() !== !!prefs.onTop) win.setAlwaysOnTop(!!prefs.onTop);
   if (prefs.dnd) startFullscreenWatch();
   else stopFullscreenWatch();
   if (tray) tray.setContextMenu(buildMenu());
@@ -96,19 +97,25 @@ public class FG {
   [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
 }
 "@
+$capture = @('ScreenClippingHost', 'SnippingTool', 'ScreenSketch', 'ShellExperienceHost', 'ShareX', 'Lightshot', 'Greenshot', 'PicPick', 'Snipaste', 'ALCapture', 'KakaoTalk', 'Gyazo', 'FSCapture', 'flameshot')
+$skip = @{}
 while ($true) {
   $full = 0
   $h = [FG]::GetForegroundWindow()
   if ($h -ne [IntPtr]::Zero) {
     $owner = 0; [void][FG]::GetWindowThreadProcessId($h, [ref]$owner)
     $sb = New-Object Text.StringBuilder 256; [void][FG]::GetClassName($h, $sb, 256); $cls = $sb.ToString()
-    if ($owner -ne SELF_PID -and $cls -ne 'Progman' -and $cls -ne 'WorkerW' -and $cls -ne 'Shell_TrayWnd') {
+    if ($owner -ne SELF_PID -and $cls -ne 'Progman' -and $cls -ne 'WorkerW' -and $cls -ne 'Shell_TrayWnd' -and -not $skip.ContainsKey([string]$owner)) {
       $r = New-Object FG+RECT; [void][FG]::GetWindowRect($h, [ref]$r)
       $mi = New-Object FG+MONITORINFO; $mi.cbSize = 40
       [void][FG]::GetMonitorInfo([FG]::MonitorFromWindow($h, 2), [ref]$mi)
       $m = $mi.rcMonitor
       # 말랑이가 사는 주 모니터를 꽉 채운 창만 전체화면으로 본다
-      if (($mi.dwFlags -band 1) -and $r.L -le $m.L -and $r.T -le $m.T -and $r.R -ge $m.R -and $r.B -ge $m.B) { $full = 1 }
+      if (($mi.dwFlags -band 1) -and $r.L -le $m.L -and $r.T -le $m.T -and $r.R -ge $m.R -and $r.B -ge $m.B) {
+        # 캡처 도구는 화면 전체를 덮는 창을 잠깐 띄운다. 전체화면으로 치지 않고, 그 프로세스는 다음부터 바로 건너뛴다
+        $name = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
+        if ($name -and $capture -contains $name) { $skip[[string]$owner] = 1 } else { $full = 1 }
+      }
     }
   }
   [Console]::Out.WriteLine($full); [Console]::Out.Flush()
@@ -126,9 +133,11 @@ function startFullscreenWatch() {
     '-NoProfile', '-NonInteractive',
     '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
   ], { windowsHide: true });
+  // 전체화면이 두 번 연달아(약 3초) 보여야 숨긴다. 목록에 없는 캡처 도구나 잠깐 뜨는 창에 깜빡이지 않게
+  let streak = 0;
   watcher.stdout.on('data', (chunk) => {
-    const lines = chunk.toString().trim().split(/\s+/);
-    setFullscreen(lines[lines.length - 1] === '1');
+    for (const v of chunk.toString().trim().split(/\s+/)) streak = v === '1' ? streak + 1 : 0;
+    setFullscreen(streak >= 2);
   });
   watcher.on('exit', () => { watcher = null; });
 }
@@ -172,7 +181,6 @@ function placeholderIcon() {
   return nativeImage.createFromBitmap(buf, { width: size, height: size });
 }
 
-let alwaysOnTop = true;
 function buildMenu() {
   const themeItem = (value, label) => ({
     label, type: 'radio', checked: theme === value,
@@ -200,8 +208,9 @@ function buildMenu() {
       ],
     },
     {
-      label: '항상 위에 표시', type: 'checkbox', checked: alwaysOnTop,
-      click: (item) => { alwaysOnTop = item.checked; win.setAlwaysOnTop(alwaysOnTop); },
+      // 기본은 꺼짐: 다른 프로그램 창이 말랑이를 덮는다 (켜면 언제나 맨 위)
+      label: '항상 위에 표시', type: 'checkbox', checked: !!prefs.onTop,
+      click: () => win && win.webContents.send('command', 'ontop'),
     },
     {
       label: '방해 금지 모드 (전체화면일 때 숨기기)', type: 'checkbox', checked: prefs.dnd,
@@ -338,7 +347,7 @@ function createWindow() {
     minimizable: false,
     maximizable: false,
     skipTaskbar: true,
-    alwaysOnTop: true,
+    alwaysOnTop: false,   // 렌더러 설정(onTop)이 오면 맞춘다
     // 도구 창(WS_EX_TOOLWINDOW)으로 만든다. 화면 전체를 덮는 투명 창이라, 말랑이를 누르는 순간
     // 크롬 같은 프로그램이 '가려졌다'고 보고 화면 그리기를 멈췄다. 도구 창은 그 계산에서 빠진다
     ...(process.platform === 'win32' ? { type: 'toolbar' } : {}),

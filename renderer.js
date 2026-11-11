@@ -304,13 +304,15 @@ function loadState() {
     if (!s.myCode) s.myCode = makeCode();
     if (typeof s.nick !== 'string') s.nick = '';
     s.focus = !!s.focus;
+    s.onTop = !!s.onTop;
+    if (!s.uiScale || typeof s.uiScale !== 'object') s.uiScale = {};
     if (!s.weatherLoc || !Number.isFinite(s.weatherLoc.lat)) s.weatherLoc = DEFAULT_LOC;
     return s;
   }
   // mark: 말랑이네 표지 위치 (화면 비율, null이면 오른쪽 아래 기본 자리)
   return {
     version: 2, lastSim: Date.now(), selectedId: null, theme: 'system', pets: [],
-    mark: null, markLocked: false, markHidden: false, dnd: true, focus: false,
+    mark: null, markLocked: false, markHidden: false, dnd: true, focus: false, onTop: false, uiScale: {},
     myCode: makeCode(), nick: '', friends: [], blocked: [], weatherLoc: DEFAULT_LOC,
   };
 }
@@ -740,7 +742,7 @@ function prefsChanged() {
   $('hFocusLabel').textContent = state.focus ? '집중 끝내기' : '집중 모드';
   $('hFocus').classList.toggle('primary', state.focus);
   document.body.classList.toggle('focusing', state.focus);   // 집중 중엔 알림 글을 구석으로
-  window.malang.prefsChanged({ hidden: state.markHidden, locked: state.markLocked, dnd: state.dnd, focus: state.focus });
+  window.malang.prefsChanged({ hidden: state.markHidden, locked: state.markLocked, dnd: state.dnd, focus: state.focus, onTop: state.onTop });
   persist();
 }
 
@@ -2136,7 +2138,7 @@ function toggleHome() {
 
 function placeHome() {
   if (home.hidden) return;
-  const w = home.offsetWidth, h = home.offsetHeight;
+  const { w, h } = boxSize(home);
   // 표지를 숨겼으면 오른쪽 아래에 연다
   const g = homeMark.geo || { x: W - 20, y: floorY(), w: 0 };
   const left = homePos ? homePos.x : g.x + g.w - w;
@@ -2633,6 +2635,48 @@ function dragBy(bar, box, setPos) {
 }
 dragBy($('homeBar'), home, (pos) => { homePos = pos; });
 
+// 오른쪽 아래 모서리를 끌어서 창을 통째로 키우고 줄인다. 글자 · 버튼 · 그림이 같이 커져서 배치가 깨지지 않는다.
+// 도트 글씨가 고르게 보이도록 0.25 단위로, 원래 크기보다 작게는 안 된다 (그보다 작으면 글씨가 뭉개진다). 모서리를 두 번 누르면 원래 크기
+const UI_SCALE = { min: 1, max: 2, step: 0.25 };
+const uiScaleOf = (box) => state.uiScale[box.id] || 1;
+// 창이 화면에서 실제로 차지하는 크기 (화면 밖으로 안 나가게 놓을 때)
+const boxSize = (box) => ({ w: box.offsetWidth * uiScaleOf(box), h: box.offsetHeight * uiScaleOf(box) });
+function setUiScale(box, k) {
+  if (k === 1) delete state.uiScale[box.id];
+  else state.uiScale[box.id] = k;
+  box.style.scale = String(k);
+}
+function resizeBy(box) {
+  const grip = document.createElement('div');
+  grip.className = 'grip';
+  grip.title = '끌어서 크기 조절 · 두 번 누르면 원래 크기';
+  box.append(grip);
+  box.style.scale = String(uiScaleOf(box));
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = box.getBoundingClientRect();
+    const bw = box.offsetWidth, bh = box.offsetHeight;
+    uiDrag = true;
+    const move = (ev) => {
+      // 모서리가 따라오도록, 가로 · 세로 중 더 많이 끈 쪽에 맞춘다
+      const k = Math.max((ev.clientX - r.left) / bw, (ev.clientY - r.top) / bh);
+      const snapped = clamp(Math.round(k / UI_SCALE.step) * UI_SCALE.step, UI_SCALE.min, UI_SCALE.max);
+      if (snapped !== uiScaleOf(box)) setUiScale(box, snapped);
+    };
+    const up = () => {
+      uiDrag = false;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      persist();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+  grip.addEventListener('dblclick', () => { setUiScale(box, 1); persist(); });
+}
+resizeBy(home);
+
 // 게이지: 10칸짜리 도트 막대
 function renderGauges() {
   document.querySelectorAll('.gauge').forEach((g) => {
@@ -3055,6 +3099,11 @@ window.malang.onCommand((command) => {
   if (command === 'dnd') {
     state.dnd = !state.dnd;
     toast(state.dnd ? '방해 금지 모드: 전체화면 창이 앞에 있으면 숨어 있을게요' : '방해 금지 모드를 껐어요');
+    prefsChanged();
+  }
+  if (command === 'ontop') {
+    state.onTop = !state.onTop;
+    toast(state.onTop ? '말랑이가 언제나 맨 위에 있을게요' : '다른 프로그램 창이 말랑이를 덮을 수 있어요');
     prefsChanged();
   }
   if (command === 'dnd:quiet') quiet = true;
@@ -3793,7 +3842,7 @@ function openFriends() {
 
 function placeFriends() {
   if (friendsBox.hidden) return;
-  const w = friendsBox.offsetWidth, h = friendsBox.offsetHeight;
+  const { w, h } = boxSize(friendsBox);
   const left = friendsPos ? friendsPos.x : W - w - 345;
   const top = friendsPos ? friendsPos.y : H - h - 60;
   friendsBox.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
@@ -3974,6 +4023,7 @@ function removeFriend(code) {
 }
 
 dragBy($('friendsBar'), friendsBox, (pos) => { friendsPos = pos; });
+resizeBy(friendsBox);
 $('friendsClose').addEventListener('click', () => { friendsBox.hidden = true; });
 $('fAdd').addEventListener('click', addFriend);
 $('fCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') addFriend(); });

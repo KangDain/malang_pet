@@ -564,7 +564,7 @@ function openAdv() {
 
 function placeAdv() {
   if (advBox.hidden) return;
-  const w = advBox.offsetWidth, h = advBox.offsetHeight;
+  const { w, h } = boxSize(advBox);
   const left = advPos ? advPos.x : 16;
   const top = advPos ? advPos.y : H - h - 24;
   advBox.style.left = Math.round(clamp(left, 10, W - w - 10)) + 'px';
@@ -1073,7 +1073,7 @@ function openCloset() {
 
 function placeCloset() {
   if (closetBox.hidden) return;
-  const w = closetBox.offsetWidth, h = closetBox.offsetHeight;
+  const { w, h } = boxSize(closetBox);
   let left = 16, top = H - h - 24;
   if (closetPos) ({ x: left, y: top } = closetPos);
   else if (!home.hidden) {
@@ -1244,6 +1244,7 @@ $('hCloset').addEventListener('click', () => { if (closetBox.hidden) openCloset(
 $('closetClose').addEventListener('click', () => { closetBox.hidden = true; });
 $('closetPet').addEventListener('change', (e) => { closetPetId = e.target.value; refreshCloset(true); });
 dragBy($('closetBar'), closetBox, (pos) => { closetPos = pos; });
+resizeBy(closetBox);
 hooks.wardrobe.push(openCloset);
 hooks.frame.push((t, dt) => {
   if (closetBox.hidden) return;
@@ -1259,6 +1260,7 @@ $('advTogether').addEventListener('click', askTogether);
 $('advBack').addEventListener('click', () => { if (R.adv) comeHome('call'); });
 $('advPet').addEventListener('change', (e) => { selPetId = e.target.value; refreshAdv(true); });
 dragBy($('advBar'), advBox, (pos) => { advPos = pos; });
+resizeBy(advBox);
 
 hooks.frame.push((t, dt) => {
   if (advBox.hidden) return;

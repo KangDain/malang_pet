@@ -119,6 +119,21 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
   cursor: move;
 }
 .titlebar .name { font-weight: bold; }
+
+/* 크기 조절: 창은 왼쪽 위를 기준으로 커지고, 오른쪽 아래 모서리에 끌 손잡이 (도트 계단) */
+#home, #adv, #closet, #friends { transform-origin: 0 0; }
+.grip {
+  position: absolute; right: 1px; bottom: 1px; width: 12px; height: 12px;
+  cursor: nwse-resize; opacity: .7;
+  background:
+    linear-gradient(var(--border), var(--border)) 9px 3px / 2px 2px no-repeat,
+    linear-gradient(var(--border), var(--border)) 6px 6px / 2px 2px no-repeat,
+    linear-gradient(var(--border), var(--border)) 9px 6px / 2px 2px no-repeat,
+    linear-gradient(var(--border), var(--border)) 3px 9px / 2px 2px no-repeat,
+    linear-gradient(var(--border), var(--border)) 6px 9px / 2px 2px no-repeat,
+    linear-gradient(var(--border), var(--border)) 9px 9px / 2px 2px no-repeat;
+}
+.grip:hover { opacity: 1; }
 .titlebar .sub { color: var(--text_sub); }
 .titlebar .link { cursor: pointer; }
 .titlebar .link.icon { display: flex; align-items: center; padding: 2px; }
