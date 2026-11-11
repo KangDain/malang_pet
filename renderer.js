@@ -32,7 +32,7 @@ const STAGES = {
   egg:   { label: '알',     r: 4, h: 9 },
   baby:  { label: '아기',   r: 5, h: 7 },
   child: { label: '어린이', r: 6, h: 8 },
-  adult: { label: '어른',   r: 8, h: 10 },
+  adult: { label: '어른',   r: 7, h: 9 },
 };
 const NAMES = ['말랑이', '몰랑이', '찹쌀이', '모찌', '젤리', '푸딩', '콩떡', '마시멜로', '두부', '방울', '솜사탕', '뭉치'];
 const SPROUTS = ['twin', 'single', 'flower'];
@@ -40,12 +40,12 @@ const STAT_KEYS = ['hunger', 'happy', 'clean', 'energy'];
 
 // 어른이 될 때 그동안 받은 돌봄에 따라 모습이 갈린다 (dr/dh: 몸 크기 보정)
 const FORMS = {
-  chubby: { label: '통통이', dr: 2, dh: -1 },
-  sporty: { label: '날쌘이', dr: -1, dh: 2 },
+  chubby: { label: '통통이', dr: 1, dh: -1 },
+  sporty: { label: '날쌘이', dr: -1, dh: 1 },
   shiny:  { label: '반짝이', dr: 0, dh: 0 },
-  sleepy: { label: '느긋이', dr: 1, dh: -2 },
+  sleepy: { label: '느긋이', dr: 1, dh: -1 },
   royal:  { label: '으뜸이', dr: 0, dh: 1 },
-  grubby: { label: '꼬질이', dr: 1, dh: 0 },
+  grubby: { label: '꼬질이', dr: 0, dh: 0 },
 };
 // 아기·어린이 때 꼬질한 채로 이만큼(시간) 지내면 어른 꼬질이가 된다
 const GRUBBY_H = 8;
@@ -790,6 +790,9 @@ function toggleFocus(_e, sleeper = null) {
   prefsChanged();
   broadcastStatus();
   refreshFriends();
+  // 집중하는 동안 미뤄 둔 새 버전 알림
+  if (state.focus) $('update').hidden = true;
+  else showUpdate();
 }
 
 // 집중 구름을 띄울 말랑이: 고른 말랑이가 깨어 있으면 그 아이, 아니면 깨어 있는 첫째
@@ -3008,7 +3011,29 @@ document.addEventListener('keydown', (e) => {
 });
 
 // 트레이 메뉴에서 오는 명령
+// ===================== 새 버전 알림 =====================
+// main.js가 GitHub에서 새 버전을 다 받아 두면 알려 준다. 집중 중이면 집중이 끝난 뒤에 띄운다.
+let updateVer = null;
+function showUpdate() {
+  if (!updateVer || state.focus) return;
+  $('updText').textContent = `새 버전(v${updateVer})이 준비됐어요!`;
+  $('update').hidden = false;
+}
+function installUpdate() {
+  persist();
+  sayBye();
+  toast('새 버전으로 바꾸는 중.. 잠깐만 기다려 주세요');
+  setTimeout(() => window.malang.installUpdate(), 300);   // 작별 인사가 전해질 틈을 준다
+}
+$('updLater').addEventListener('click', () => {
+  $('update').hidden = true;
+  toast('다음에 말랑이를 끌 때 새 버전으로 바뀌어요');
+});
+$('updNow').addEventListener('click', installUpdate);
+
 window.malang.onCommand((command) => {
+  if (command === 'update:install') installUpdate();
+  else if (command.startsWith('update:')) { updateVer = command.slice(7); showUpdate(); }
   if (command === 'adopt') openModal('adopt');
   if (command === 'gather') gather();
   if (command.startsWith('theme:')) setTheme(command.slice(6));

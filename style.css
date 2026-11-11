@@ -295,6 +295,13 @@ select.input { cursor: pointer; }
 .gear .btn { flex: none; }
 .gear.worn { box-shadow: inset 2px 0 0 0 var(--pet); }
 
+/* 새 버전 알림 — 화면 위쪽 가운데 */
+#update {
+  position: fixed; z-index: 20; top: 24px; left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: 320px; padding: 10px 12px; animation: pop .12s steps(2);
+}
+#update .buttons { margin-top: 10px; }
+
 /* 창밖 날씨 한 줄 */
 .weather { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--text_sub); font-size: 11px; }
 .weather #wLine { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

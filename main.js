@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, crashReporter } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -7,6 +7,26 @@ let win = null;
 let tray = null;
 
 const savePath = () => path.join(app.getPath('userData'), 'malang-save.json');
+
+// ===================== 실행 기록 =====================
+// 어떤 PC에서 말랑이가 안 켜질 때 원인을 찾으려고 %APPDATA%malang-petmalang-log.txt에 남긴다.
+// 'start'만 있고 그 뒤가 없으면 창을 띄우기 전에 죽은 것, 아예 없으면 실행 자체가 막힌 것
+const logPath = () => path.join(app.getPath('userData'), 'malang-log.txt');
+function log(...args) {
+  try {
+    const line = `[${new Date().toISOString()}] ${args.join(' ')}
+`;
+    // 너무 커지면 새로 시작한다
+    if (fs.existsSync(logPath()) && fs.statSync(logPath()).size > 200 * 1024) fs.writeFileSync(logPath(), '');
+    fs.appendFileSync(logPath(), line);
+  } catch {}
+}
+log('start', app.getVersion(), process.platform, require('os').release(), process.execPath);
+process.on('uncaughtException', (err) => log('main error', (err && err.stack) || err));
+app.on('child-process-gone', (_e, d) => log('child gone', d.type, d.reason, d.exitCode, d.name || ''));
+app.on('render-process-gone', (_e, _wc, d) => log('renderer gone', d.reason, d.exitCode));
+// 네이티브로 죽어도 덤프가 %APPDATA%malang-petCrashpad에 남는다 (어디로도 보내지 않는다)
+try { crashReporter.start({ uploadToServer: false }); } catch {}
 
 ipcMain.on('load-sync', (e) => {
   try {
@@ -121,6 +141,7 @@ function stopFullscreenWatch() {
 function setFullscreen(full) {
   if (!win) return;
   if (full && !hiddenByDnd && win.isVisible()) {
+    log('dnd: hidden by a fullscreen window');
     hiddenByDnd = true;
     win.hide();
     win.webContents.send('command', 'dnd:quiet');
@@ -191,11 +212,38 @@ function buildMenu() {
       label: '윈도우 시작할 때 같이 켜기', type: 'checkbox', checked: autoStart(),
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked, path: exePath() }),
     }] : []),
+    ...(updateReady ? [{ label: `새 버전 ${updateReady} 설치하고 다시 켜기`, click: () => win && win.webContents.send('command', 'update:install') }] : []),
     { type: 'separator' },
     // 렌더러가 친구들에게 작별 인사를 보내고 끈다 (응답이 없으면 1초 뒤 그냥 끈다)
     { label: '종료', click: () => { if (win) { win.webContents.send('command', 'quit'); setTimeout(() => app.quit(), 1000); } else app.quit(); } },
   ]);
 }
+
+// ===================== 자동 업데이트 =====================
+// GitHub Releases에 새 버전이 올라오면 몰래 받아 두고, 다 받으면 말랑이가 알림 창을 띄운다.
+// '지금 다시 켜기'를 누르면 바로 설치하고 다시 켜지고, '나중에'를 누르면 다음에 끌 때 설치된다.
+// 설치판(Setup.exe)으로 깐 경우만 (포터블 · 개발 중 실행은 건너뛴다)
+let updateReady = null;   // 다 받아 둔 새 버전
+let autoUpdater = null;
+function setupUpdater() {
+  if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_FILE) return;
+  try { ({ autoUpdater } = require('electron-updater')); } catch { return; }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-downloaded', (info) => {
+    updateReady = info.version;
+    if (tray) tray.setContextMenu(buildMenu());
+    if (win) win.webContents.send('command', 'update:' + info.version);
+  });
+  autoUpdater.on('error', () => {});   // 인터넷이 없거나 릴리스가 없어도 조용히 넘어간다
+  const check = () => { if (!updateReady) autoUpdater.checkForUpdates().catch(() => {}); };
+  setTimeout(check, 15000);
+  setInterval(check, 3 * 60 * 60 * 1000);
+}
+// 렌더러가 저장 · 작별 인사를 마치고 부른다
+ipcMain.on('install-update', () => {
+  if (autoUpdater && updateReady) autoUpdater.quitAndInstall(true, true);
+});
 
 function createTray() {
   tray = new Tray(placeholderIcon());
@@ -238,6 +286,9 @@ function createWindow() {
   win.setIgnoreMouseEvents(true, { forward: true });
   win.loadFile('index.html');
   win.on('closed', () => { win = null; });
+  win.webContents.on('did-finish-load', () => log('window ready', JSON.stringify(screen.getPrimaryDisplay().workArea)));
+  win.webContents.on('did-fail-load', (_e, code, desc) => log('load failed', code, desc));
+  win.webContents.on('console-message', (e) => { if (e.level === 'error') log('renderer error', e.message, `${e.sourceId}:${e.lineNumber}`); });
 
   screen.on('display-metrics-changed', fitToWorkArea);
   screen.on('display-added', fitToWorkArea);
@@ -245,6 +296,7 @@ function createWindow() {
 }
 
 if (!app.requestSingleInstanceLock()) {
+  log('already running - showing the existing one');
   app.quit();
 } else {
   // 윈도우 알림이 표시되려면 앱 ID가 필요하다
@@ -258,6 +310,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     createWindow();
     createTray();
+    setupUpdater();
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => { if (watcher) watcher.kill(); });
