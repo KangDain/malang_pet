@@ -258,7 +258,7 @@ body.focusing #toasts { left: auto; right: 24px; transform: none; align-items: f
   background: none; box-shadow: none; color: var(--text_sub); font-size: 11px;
 }
 #fLog .msg .who { font-size: 11px; opacity: .75; }
-#fLog .msg img { display: block; max-width: 100%; max-height: 110px; image-rendering: auto; }
+#fLog .msg img { display: block; max-width: 100%; max-height: 110px; image-rendering: auto; cursor: zoom-in; }
 /* 친구가 쓰고 있어요: 이름 + 점 세 개가 차례로 */
 #fLog .msg.typing .dots { display: flex; gap: 3px; padding: 4px 0; }
 #fLog .msg.typing .dots i { width: 4px; height: 4px; background: var(--text_sub); animation: typing 1.2s steps(1) infinite; }

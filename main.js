@@ -318,6 +318,41 @@ function runSetup(run) {
 }
 function openRelease() { shell.openExternal(RELEASE_PAGE); }
 ipcMain.on('open-release', openRelease);
+
+// ===================== 사진 크게 보기 =====================
+// 대화창의 사진을 누르면 따로 창을 띄워 화면에 맞게 크게 보여 준다 (누르거나 Esc로 닫기)
+ipcMain.on('open-photo', (_e, data, w, h) => {
+  if (typeof data !== 'string' || !/^data:image\/(jpeg|png|webp|gif);base64,/.test(data)) return;
+  const area = screen.getPrimaryDisplay().workArea;
+  w = Math.max(1, +w || 400); h = Math.max(1, +h || 400);
+  // 작은 사진도 화면의 70%까지 키운다 (원본의 3배까지)
+  const k = Math.min(3, (area.width * 0.7) / w, (area.height * 0.7) / h);
+  const ww = Math.max(200, Math.round(w * k)), wh = Math.max(150, Math.round(h * k));
+  const photo = new BrowserWindow({
+    width: ww, height: wh, useContentSize: true,
+    x: area.x + Math.round((area.width - ww) / 2), y: area.y + Math.round((area.height - wh) / 2),
+    title: '사진 - 말랑이 키우기',
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    backgroundColor: '#1b1b1f',
+    autoHideMenuBar: true,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  photo.setMenu(null);
+  photo.webContents.on('will-navigate', (ev) => ev.preventDefault());
+  photo.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  photo.webContents.on('before-input-event', (_ev, input) => { if (input.key === 'Escape') photo.close(); });
+  const html = '<!doctype html><meta charset="utf-8"><title>사진 - 말랑이 키우기</title>'
+    + '<style>html,body{margin:0;height:100%;background:#1b1b1f;overflow:hidden}'
+    + 'img{display:block;width:100%;height:100%;object-fit:contain;cursor:zoom-out}</style>'
+    + '<img alt="사진" onclick="window.close()">';
+  photo.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  photo.webContents.once('did-finish-load', async () => {
+    try { await photo.webContents.executeJavaScript(`document.querySelector('img').src = ${JSON.stringify(data)}`); } catch {}
+    photo.show();
+  });
+});
 // 렌더러가 저장 · 작별 인사를 마치고 부른다
 ipcMain.on('install-update', () => {
   if (autoUpdater && updateReady) autoUpdater.quitAndInstall(true, true);

@@ -548,6 +548,7 @@ const advBox = $('adv');
 const sceneCv = $('advScene');
 const sctx = sceneCv.getContext('2d');
 const SW = sceneCv.width, SH = sceneCv.height, SG = 82;   // 장면 크기 · 땅 높이
+const MOB_PX = 6, BOSS_PX = 8;   // 몬스터는 말랑이보다 크게, 보스는 더 크게
 let advPos = null;
 let kitchen = false;
 let advKey = '';
@@ -778,7 +779,7 @@ function drawScene(t, dt) {
   if (!p) {
     // 준비 중: 갈 곳의 몬스터가 어슬렁
     const m = zone.mobs[Math.floor(t / 3) % zone.mobs.length];
-    drawSprite(sctx, m.sprite, 200 + Math.sin(t) * 6, SG - (Math.sin(t * 5) > 0.6 ? 2 : 0), 2);
+    drawSprite(sctx, m.sprite, 200 + Math.sin(t) * 6, SG + 2 - MOB_PX - (Math.sin(t * 5) > 0.6 ? 2 : 0), MOB_PX);
     sctx.fillStyle = T.text_sub;
     sctx.font = '11px Galmuri11, "Malgun Gothic", sans-serif';
     sctx.textAlign = 'left'; sctx.textBaseline = 'top';
@@ -816,7 +817,9 @@ function drawScene(t, dt) {
   // 상대
   if (fighting) {
     const res = f.res;
-    const px = res.boss ? 3 : 2;
+    const px = res.boss ? BOSS_PX : MOB_PX;
+    const rows = SPR[res.mob.sprite];
+    const mh = rows.length * px, mw = rows[0].length * px;   // 몬스터 키 · 폭
     let mx = 206;
     if (f.t < ENTER) mx = 206 + (1 - f.t / ENTER) * 90;
     const theirTurn = hitI >= 0 && !over && hitI % 2 === 1 && res.dmg > 0;
@@ -826,7 +829,7 @@ function drawScene(t, dt) {
     // 활: 화살이 슝 날아가서 맞힌다 (몬스터가 움찔하기 전에 닿는다)
     const fly = ((ft % HIT) / HIT) * 2.5;
     if (bow && ourTurn && fly < 1) {
-      const ax = Math.round(110 + (mx - 8 - 110) * fly), ay = SG - 12;
+      const ax = Math.round(110 + (mx - mw / 2 - 110) * fly), ay = SG - 12;
       sctx.fillStyle = T.pot;
       sctx.fillRect(ax - 8, ay, 8, 2);
       sctx.fillStyle = T.text_sub;
@@ -834,25 +837,25 @@ function drawScene(t, dt) {
       sctx.fillRect(ax - 10, ay - 2, 2, 2); sctx.fillRect(ax - 10, ay + 2, 2, 2);
     }
     if (!gone && !(hurt && Math.floor(t * 20) % 2)) {
-      drawSprite(sctx, res.mob.sprite, mx + (hurt ? 2 : 0), SG, px);
-      if (res.boss) drawSprite(sctx, 'crown', mx, SG - SPR[res.mob.sprite].length * px - 4, 2);
+      drawSprite(sctx, res.mob.sprite, mx + (hurt ? 2 : 0), SG + 2 - px, px);
+      if (res.boss) drawSprite(sctx, 'crown', mx, SG + 2 - mh - 6, 2);
     }
     // 한 대 맞을 때마다 숫자가 톡
     if (hitI >= 0 && !over && hitI !== f.lastHit) {
       f.lastHit = hitI;
-      if (hitI % 2 === 0) scene.floaters.push({ x: mx, y: SG - 24, text: String(Math.round(res.mob.hp * (res.boss ? Math.max(1, res.team.length + 1) : 1) / res.rounds)), color: T.text, t: 0.8 });
+      if (hitI % 2 === 0) scene.floaters.push({ x: mx, y: SG - mh - 4, text: String(Math.round(res.mob.hp * (res.boss ? Math.max(1, res.team.length + 1) : 1) / res.rounds)), color: T.text, t: 0.8 });
       else if (res.dmg > 0) scene.floaters.push({ x: 96, y: SG - 30, text: '-' + Math.max(1, Math.round(res.dmg / Math.max(1, res.rounds - 1))), color: T.warn, t: 0.8 });
     }
     if (gone && !f.done) {
       f.done = true;
-      for (let i = 0; i < 6; i++) scene.bits.push({ x: mx, y: SG - 10, vx: rand(-60, 60), vy: -rand(60, 140), t: 0.7, sprite: 'puff' });
+      for (let i = 0; i < 6; i++) scene.bits.push({ x: mx, y: SG - mh / 2, vx: rand(-60, 60), vy: -rand(60, 140), t: 0.7, sprite: 'puff' });
       let k = 0;
       for (const [item, n] of Object.entries(res.loot)) {
-        scene.floaters.push({ x: mx - 10 + k * 22, y: SG - 18, text: `+${n}`, color: T.text, t: 1.3, sprite: ITEMS[item].sprite });
+        scene.floaters.push({ x: mx - 10 + k * 22, y: SG - mh / 2, text: `+${n}`, color: T.text, t: 1.3, sprite: ITEMS[item].sprite });
         k++;
       }
       if (res.levelUp) scene.floaters.push({ x: 96, y: SG - 44, text: `Lv.${res.levelUp}!`, color: T.warn, t: 1.6 });
-      if (res.gear) scene.floaters.push({ x: mx, y: SG - 40, text: '!', color: T.warn, t: 2, sprite: GEAR[res.gear].sprite });
+      if (res.gear) scene.floaters.push({ x: mx, y: SG - mh - 16, text: '!', color: T.warn, t: 2, sprite: GEAR[res.gear].sprite });
     }
     if (over && !res.win && !f.done) { f.done = true; scene.floaters.push({ x: 96, y: SG - 40, text: '후퇴..', color: T.warn, t: 1.4 }); }
     sctx.fillStyle = res.boss ? T.warn : T.text_sub;

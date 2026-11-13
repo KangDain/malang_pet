@@ -63,6 +63,16 @@ function topCare(p) {
   return [best, c[best] || 0];
 }
 
+// 아직 어른 모습이 없을 때 보이는 성향 (꼬질쟁이 · 먹보 · ...)
+function tendencyOf(p, st = stageOf(p)) {
+  if (formOf(p, st) || st === 'egg') return null;
+  if ((p.dirtyH || 0) >= GRUBBY_H / 2) return '꼬질쟁이';
+  const [care, n] = topCare(p);
+  return n >= 3 ? TENDENCY[care] : null;
+}
+// 깔끔쟁이(어른이 되면 반짝이)는 응가를 보면 알아서 치운다
+const isTidy = (p, st = stageOf(p)) => formOf(p, st) === FORMS.shiny || tendencyOf(p, st) === TENDENCY.clean;
+
 function decideForm(p) {
   const c = p.care || {};
   // 한 번도 안 아프고 골고루 돌봐 주면 으뜸이
@@ -1095,8 +1105,42 @@ function hop(p, v) {
 }
 
 // 목적지에 닿았을 때: 같이 자러 왔거나, 친구를 만나러 왔거나
+// 깔끔쟁이: 바닥에 응가가 있으면 조금 있다가 폴짝폴짝 가서 빗자루로 치운다
+function tidyUp(p, v, st, dt) {
+  if (p.visitor || st === 'egg' || p.sleeping || p.sick || v.held || v.fishing || !isTidy(p, st)) return;
+  if (v.tidy || (v.goalT > 0 && v.goal !== null)) return;
+  v.tidyT = (v.tidyT ?? rand(3, 6)) - dt;
+  if (v.tidyT > 0) return;
+  v.tidyT = rand(4, 8);
+  // 아직 아무도 안 치우는 응가 중 제일 가까운 것
+  let best = null;
+  for (const o of state.pets) {
+    for (const f of o.poops) {
+      if (sweepOf(o, f) || state.pets.some((x) => viewOf(x).tidy?.f === f)) continue;
+      const d = Math.abs(poopX(f) - v.x);
+      if (!best || d < best.d) best = { o, f, d };
+    }
+  }
+  if (!best) return;
+  v.tidy = { o: best.o, f: best.f };
+  v.goal = poopX(best.f);
+  v.goalT = 15;
+  v.hopT = Math.min(v.hopT, 0.4);
+  v.meet = null; v.joinSleep = null;
+  setEmote(v, 'sparkle', 1.2);
+}
+
 function arrive(p, v) {
   if (v.goHome) return enterHouse(p, v);
+  if (v.tidy) {
+    const { o, f } = v.tidy;
+    v.tidy = null;
+    if (!o.poops.includes(f) || Math.abs(poopX(f) - v.x) > 60) return;
+    sweepPoop(o, f);
+    p.happy += 2;
+    say(v, pick(['깨끗하게~', '슥슥 싹싹!', '응가 치우기 완료!', '내가 치울게~']), 2);
+    return;
+  }
   if (v.joinSleep) {
     const buddy = state.pets.find((x) => x.id === v.joinSleep);
     v.joinSleep = null;
@@ -1261,7 +1305,8 @@ function updateView(p, v, dt) {
   v.playT = Math.max(0, v.playT - dt);
   v.squint = Math.max(0, v.squint - dt);
   v.goalT = Math.max(0, v.goalT - dt);
-  if (v.goalT === 0) { v.joinSleep = null; v.meet = null; }
+  if (v.goalT === 0) { v.joinSleep = null; v.meet = null; v.tidy = null; }
+  tidyUp(p, v, st, dt);
 
   if (st !== 'egg' && !v.held) {
     v.bubbleT -= dt;
@@ -1880,6 +1925,11 @@ function frame(now) {
   for (const vis of visitors) {
     const v = vis.v;
     if (!v.geo) continue;
+    if (vis.infoT > 0) {
+      drawLabel(ctx, visitorInfo(vis.pet), v.geo.cx, v.geo.top - 14);
+      drawLabel(ctx, `${vis.nick}의 ${vis.pet.name}`, v.geo.cx, v.geo.top - 34);
+      continue;
+    }
     if (vis.pet.id === hoverVisitor) { drawLabel(ctx, `${vis.nick}의 ${vis.pet.name}`, v.geo.cx, v.geo.top - 14); continue; }
     // 친구가 집중 중이면 집중 말풍선이 먼저, 쪽지는 그 위로. 평소엔 그냥 같이 논다
     const st = friendStatus.get(vis.code) || {};
@@ -2640,6 +2690,16 @@ roomCanvas.addEventListener('pointerdown', (e) => {
       return;
     }
   }
+  // 집에 놀러 온 친구 말랑이는 이름 · 특성 · 레벨을 알려 준다
+  for (const vis of visitors) {
+    const g = vis.v.inside && roomViews.get(vis.pet.id)?.geo;
+    if (!g) continue;
+    const dx = (pt.x - g.cx) / (g.rx + 4), dy = (pt.y - g.cy) / (g.ry + 4);
+    if (dx * dx + dy * dy <= 1) {
+      roomViews.get(vis.pet.id).sv += 3.5;
+      return toast(`${vis.nick}의 ${vis.pet.name} · ${visitorInfo(vis.pet)}`);
+    }
+  }
   const { x, y, w, h } = WARDROBE;
   if (pt.x >= x - 2 && pt.x <= x + w + 2 && pt.y >= y - 4 && pt.y <= y + h + 2) runHooks('wardrobe');
 });
@@ -2758,11 +2818,8 @@ function refreshCard() {
   const age = Date.now() - p.born;
   $('pName').textContent = p.name;
   const form = formOf(p, st);
-  const [care, n] = topCare(p);
   // 꼬질하게 오래 지내면 어른 꼬질이가 될 낌새가 보인다
-  const tend = form || st === 'egg' ? null
-    : (p.dirtyH || 0) >= GRUBBY_H / 2 ? '꼬질쟁이'
-    : n >= 3 ? TENDENCY[care] : null;
+  const tend = tendencyOf(p, st);
   $('pStage').textContent = STAGES[st].label + (form ? ` · ${form.label}` : tend ? ` · ${tend}` : '') + (p.angler ? ' · 낚시꾼' : '');
   runHooks('card', p);
   $('pAge').textContent = st === 'egg'
@@ -3866,7 +3923,16 @@ function visitorLooks(info) {
     born: Date.now() - EGG_MS - { baby: 2, child: 30, adult: 80 }[stage] * HOUR,
     gear: info.gear && typeof info.gear === 'object' ? { weapon: gearId(info.gear.weapon), armor: gearId(info.gear.armor) } : null,
     angler: !!info.angler,
+    tend: [...Object.values(TENDENCY), '꼬질쟁이'].includes(info.tend) ? info.tend : null,
+    lv: Number.isFinite(+info.lv) && +info.lv >= 1 ? clamp(Math.floor(+info.lv), 1, 99) : null,
   };
+}
+// 친구 말랑이를 누르면 보이는 소개: '어른 · 반짝이 · 낚시꾼 · Lv.5'
+function visitorInfo(pet) {
+  const st = stageOf(pet);
+  const form = formOf(pet, st);
+  const traits = [form ? form.label : pet.tend, pet.angler ? '낚시꾼' : null].filter(Boolean);
+  return [STAGES[st].label, traits.length ? traits.join(' · ') : '특성 없음', pet.lv ? `Lv.${pet.lv}` : null].filter(Boolean).join(' · ');
 }
 const guestPet = (id, info) => ({ id, visitor: true, ...visitorLooks(info), hunger: 100, happy: 100, clean: 100, energy: 100, sick: false, sleeping: false, poops: [] });
 // 친구 화면에 보낼 모습: 생김새 + 입은 장비 + 낚시꾼 모자
@@ -3874,6 +3940,7 @@ const looksOf = (p) => ({
   name: p.name, sprout: p.sprout, color: p.color, form: p.form, stage: stageOf(p),
   gear: p.rpg && p.rpg.gear ? { weapon: p.rpg.gear.weapon || null, armor: p.rpg.gear.armor || null } : null,
   angler: !!p.angler,
+  tend: tendencyOf(p), lv: typeof rpgOf === 'function' ? rpgOf(p).lv : null,
 });
 const gearId = (id) => (typeof id === 'string' && /^[A-Za-z]{1,20}$/.test(id) ? id : null);
 
@@ -3910,6 +3977,7 @@ function updateVisitors(dt) {
   for (const vis of [...visitors]) {
     updateView(vis.pet, vis.v, dt);
     ageChat(vis.chat, dt);
+    if (vis.infoT > 0) vis.infoT -= dt;
     // 방에서 나가면 집으로 돌아간다
     if (!roomHas(vis.code)) removeVisitor(vis);
   }
@@ -3931,6 +3999,7 @@ function visitorClicked(vis) {
   vis.v.sv += 3.5;
   vis.v.squint = 0.5;
   setEmote(vis.v, 'heart', 0.8);
+  vis.infoT = 5;   // 이름 · 특성 · 레벨을 잠깐 보여 준다
   fTarget = vis.code;
   // 같은 단톡방이면 바로 대화창, 아니면 친구 창
   if (roomHas(vis.code)) { openChat(); $('fMsg').focus(); } else openFriends();
@@ -4145,7 +4214,10 @@ function renderChat() {
       const img = document.createElement('img');
       img.src = n.img;
       img.alt = '사진';
+      img.title = '눌러서 크게 보기';
       img.addEventListener('load', () => { box.scrollTop = box.scrollHeight; });
+      // 누르면 새 창으로 크게 본다
+      img.addEventListener('click', () => window.malang.openPhoto(n.img, img.naturalWidth, img.naturalHeight));
       el.append(img);
     }
     if (n.text) {

@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld('malang', {
   version: ipcRenderer.sendSync('app-version'),
   installUpdate: () => ipcRenderer.send('install-update'),
   openRelease: () => ipcRenderer.send('open-release'),
+  openPhoto: (data, w, h) => ipcRenderer.send('open-photo', data, w, h),
   onCommand: (cb) => ipcRenderer.on('command', (_e, command) => cb(command)),
 });
